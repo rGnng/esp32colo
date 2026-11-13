@@ -3,6 +3,9 @@
 #include <cstdlib>
 #include <new>
 #include "scene_icons.h"
+#include "scene_cue.h"
+#include "general_service.h"
+#include "audio_demo.h"
 
 namespace SceneService {
 namespace {
@@ -82,18 +85,22 @@ bool readColor(const String &value,uint32_t &out) {
   }
   out=rgb; return true;
 }
-bool commit(String &error) {
+bool commit(String &error,int direction=0) {
   if (!valid(gCandidate)) { error="invalid scene, action or effect configuration"; return false; }
   if (!std::memcmp(&gSettings,&gCandidate,sizeof(gSettings))&&!gLevelDirty) return true;
   if (!gOpen||gPrefs.putBytes("settings",&gCandidate,sizeof(gCandidate))!=sizeof(gCandidate)) {
     error="could not save scenes to NVS"; return false;
   }
-  gSettings=gCandidate; gStored=true;gLevelDirty=false;++gRevision; ++gEpoch; gFeedback.clear(); return true;
+  const int previous=gSettings.active;
+  gSettings=gCandidate; gStored=true;gLevelDirty=false;++gRevision; ++gEpoch; gFeedback.clear();
+  const unsigned cue=SceneCue::frequency(GeneralService::sceneChangeSound(),previous,gSettings.active,direction);
+  if(cue)AudioDemo::beep(cue,SceneCue::kDurationMs);
+  return true;
 }
-bool activate(int id) {
+bool activate(int id,int direction=0) {
   if (!exists(gSettings,id)) return false;
   gCandidate=gSettings; gCandidate.active=id;
-  return commit(gError);
+  return commit(gError,direction);
 }
 String list(const char *const *names,int count) {
   String out="["; for (int i=0;i<count;++i) { if (i) out+=','; out+=quote(names[i]); } return out+"]";
@@ -140,6 +147,14 @@ uint16_t combinations() {
   }
   return flags;
 }
+GestureBindings gestureBindings(){
+  GestureBindings out;
+  for(const auto &b:gSettings.bindings)if(b.count&&(b.scene==gSettings.active||(b.scene==0&&b.global))){
+    const int group=comboMask(b.input);
+    if(group)out.combos[group]|=1u<<b.gesture;else out.physical[b.input]|=1u<<b.gesture;
+  }
+  return out;
+}
 Feedback feedback() { return gFeedback.snapshot(millis()); }
 SceneSettings::Light lighting(bool ring) {
   const auto &scene=gSettings.scenes[gSettings.active];
@@ -152,7 +167,7 @@ uint8_t screen() {
 String statusJson() {
   const auto f=feedback();
   String out="{\"active\":"+String(gSettings.active)+",\"name\":"+quote(gSettings.scenes[gSettings.active].name);
-  out+=",\"standby_screen\":\"clock\",\"screen\":\"clock\",\"stored\":"+String(gStored?"true":"false");
+  out+=",\"standby_screen\":"+quote(kScreens[gSettings.scenes[gSettings.active].screen])+",\"screen\":"+quote(kScreens[screen()])+",\"stored\":"+String(gStored?"true":"false");
   out+=sceneLighting(gSettings.scenes[gSettings.active]);
   out+=",\"revision\":"+String(gRevision);
   out+=",\"epoch\":"+String(gEpoch)+",\"last_event\":{\"sequence\":"+String(gSequence)+",\"at_ms\":"+String(gAt);
@@ -176,7 +191,7 @@ String configJson() {
   for (int i=0;i<kSceneCount;++i) {
     if (!exists(gSettings,i)) continue;
     if (!first) out+=','; first=false;
-    out+="{\"id\":"+String(i)+",\"name\":"+quote(gSettings.scenes[i].name)+",\"protected\":"+String(i==0?"true":"false")+",\"standby_screen\":\"clock\""+sceneLighting(gSettings.scenes[i])+",\"bindings\":[";
+    out+="{\"id\":"+String(i)+",\"name\":"+quote(gSettings.scenes[i].name)+",\"protected\":"+String(i==0?"true":"false")+",\"standby_screen\":"+quote(kScreens[gSettings.scenes[i].screen])+sceneLighting(gSettings.scenes[i])+",\"bindings\":[";
     bool firstBinding=true;
     for (const auto &b:gSettings.bindings) {
       if (!b.count||b.scene!=i) continue;
@@ -212,7 +227,11 @@ bool configure(WebServer &server,String &error) {
       error="scene names must be distinct"; return false;
     }
     name.toCharArray(gCandidate.scenes[id].name,25);
-    if (server.hasArg("standby_screen")&&server.arg("standby_screen")!="clock") { error="Clock is the available screen behavior"; return false; }
+    if(server.hasArg("standby_screen")){
+      const int screen=index(server.arg("standby_screen"),kScreens,kScreenCount);
+      if(screen<kClock){error="standby_screen must be clock or blank";return false;}
+      gCandidate.scenes[id].screen=screen;
+    }
     if(server.hasArg("icon")) {
       const int icon=index(server.arg("icon"),SceneIcons::kNames,SceneIcons::kCount);
       if(icon<0){error="unknown scene icon";return false;}gCandidate.scenes[id].icon=icon;
@@ -306,7 +325,7 @@ void event(int input,int gesture,int repetitions) {
       const int direction=a.type==kNextScene?1:-1;
       for (int n=1;n<=kSceneCount;++n) {
         const int id=(int(gSettings.active)+direction*n+kSceneCount)%kSceneCount;
-        if (exists(gSettings,id)) { activate(id); break; }
+        if (exists(gSettings,id)) { activate(id,direction); break; }
       }
     } else if (gHandler) gPercent=gHandler(a,repetitions);
     gFeedback.apply(a,gPercent,millis());

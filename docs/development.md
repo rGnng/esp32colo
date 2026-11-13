@@ -4,6 +4,9 @@ Hardware bring-up is complete. The current code is a working foundation for
 feature development; this document describes its implementation and evidence
 limits. User-facing behavior belongs in the [firmware guide](firmware.md),
 requests in the [API](api.md), and build/update procedures in [Flashing](flash.md).
+The proposed Serial/Bluetooth action categories, Tab5 source review, pairing
+and bidirectional media-state contract are in the
+[Tab5 integration plan](tab5-integration.md).
 
 ## Source layout
 
@@ -14,6 +17,8 @@ requests in the [API](api.md), and build/update procedures in [Flashing](flash.m
 | `firmware/src/scene_service.cpp` | Versioned NVS scenes, atomic CRUD/bindings, activation, ordered dispatch and temporary effects |
 | `firmware/include/scene_settings.h` | Bounded scene/action schema, validation, protected Default and reference retargeting |
 | `firmware/include/gesture_engine.h` | Independent nonblocking click/hold/turn recognizers with cancellation |
+| `firmware/include/gesture_policy.h`, `chord_engine.h` | Binding-aware recognition timing and reusable held combination members |
+| `firmware/src/general_service.cpp`, `firmware/include/scene_cue.h` | Persistent General preferences and direction-specific scene sounds |
 | `firmware/src/clock_service.cpp` | NTP, supported timezones, atomic clock settings and time snapshots |
 | `firmware/src/usb_network.cpp` | Selectable CDC-ECM, lwIP netif, one-client DHCP and USB stages/telemetry |
 | `firmware/src/usb_phy_mode.c` | Restore serial/JTAG PHY selection after warm resets |
@@ -49,6 +54,7 @@ recovery guard described in [Flashing](flash.md#recovery).
 | `clock` | Versioned `settings` blob, 804 bytes (v2; migrates 296-byte v1) | Three NTP servers and supported zone committed together; apply and sync immediately |
 | `lighting` | Versioned `settings` blob, 44 bytes | Independent levels/Auto flags, mode/color and calibration; web saves before apply; knob writes debounced 1.5 s |
 | `usbnet` | Versioned `settings` blob, 12 bytes | Mode, prefix, device/host addresses saved together; restart to apply |
+| `general` | Version-2 `settings` blob, 12 bytes (migrates 8-byte v1) | Scene-change sound and sleep timeout in minutes (default 60); save before apply |
 | `scenes` | Version-3 `settings` blob, 3304 bytes | 8 scenes, 64 sparse gesture bindings, 3 actions each; active selection committed with config |
 | `demo` | Image MD5 and failed-start attempts | Recovery state, not user configuration |
 
@@ -88,6 +94,9 @@ The historical name `test_http_ota.sh` now runs the broader host regression suit
 | `scene_settings_test.cpp` | Protected Default, ordered bindings, deletion/retargeting, corrupt storage and capacity |
 | `action_feedback_test.cpp` | Independent screen/LED lifetimes, replacement, inheritance, clear and timer wrap |
 | `gesture_engine_test.cpp` | Click counts, hold/release, modified turns, click suppression, debounce, independent inputs, cancellation and timer wrap |
+| `chord_engine_test.cpp` | Exact groups, repeated held-key combinations, binding-aware timing, superset arbitration, boot-held inputs and cancellation |
+| `idle_timer_test.cpp` | One-hour default, disable, timeout boundaries/reset, millis wrap, General v1 migration and numeric validation |
+| `scene_cue_test.cpp` | General preference validation, directional tones, wraparound, unchanged/muted transitions |
 | `usb_dhcp_test.cpp` | Subnet validation, DHCP wire replies, sole-lease ownership, renewal/release/decline/expiry, timer wrap and malformed packets |
 
 C++ fixtures use the host compiler; they do not prove physical output. The Python
@@ -151,6 +160,8 @@ recognized events without blocking the HTTP/audio loop. The hardware layer
 passes those to SceneService, which resolves the active scene's saved binding
 and executes ordered actions through a local hardware handler. Scene switching
 ends that list, advances the configuration epoch and cancels pending gestures.
+The recognizer preserves held members as combination anchors; a fresh trigger
+press is required in the next scene.
 No input mappings are hardcoded in the polling loop beyond boot recovery.
 
 Percentage-producing actions return values to the feedback controller. Clock
@@ -409,3 +420,82 @@ OTA verified running MD5 `eb178aacaded1d88aa4f8a1d9d8131dc`. Live SSID/status/
 RSSI/IP and modal open/cancel checks passed from 320 to 1440 px without JavaScript
 errors or configuration writes. Scene/global settings and WiFi SSID matched the
 pre-update snapshot, and the device passed boot confirmation.
+
+
+## Scene sound and responsive inputs (0.5.2–0.5.3)
+
+General has a persisted Scene change sound switch, initially on. Successful
+active-ID changes queue a 90 ms tone after the scene NVS commit. Next uses
+880 Hz and Previous 440 Hz, including sparse scenes and wraparound; direct
+activation uses numeric ID direction. Boot, unchanged and failed changes are
+silent. Audio telemetry records the last tone actually written to I2S.
+
+0.5.2 OTA MD5 `2f057c2696e28f676bb7bba76c21b1c9` passed live direction,
+wraparound, no-op, mute and failed-change checks. Mute survived reboot. Browser
+checks covered switch save/reload/error rollback and 320–1440 px layouts.
+Temporary test bindings were removed and the original active scene restored.
+These checks verified playback telemetry; audible tone distinction needs the
+user's observation.
+
+0.5.3 rebuilds per-input gesture masks from active and Global Default bindings
+only when configuration changes. Unmapped Hold/Hold-release never start hold
+recognition; unmapped Double/Triple add no click-window wait. Single-only fires
+after debounce except individual combination members and a knob with modified
+turn bindings, which defer until release to avoid conflicting actions. With a
+mapped hold, short singles resolve on release. Double without Triple resolves
+on its second release.
+
+An exact combination resolves immediately unless a configured superset could
+still join inside 80 ms. Releasing any member rearms it; remaining held members
+can anchor another combination, including across scene changes. Cancelled raw
+presses cannot become fresh edges, and boot-held suppression remains intact.
+Host tests cover repeated 4+2 / 4+3 commands, reconfiguration while held,
+configured/unconfigured holds, multi-click masks, superset arbitration,
+modified knob turns, cancellation and timer wrap. Physical GPIO timing cannot
+be injected through the HTTP relay and still needs hands-on testing.
+
+The web scene-icon selector shows only its SVG; its tooltip/accessibility label
+retains the icon name. The on-device transition still shows the scene name.
+
+
+0.5.3 OTA MD5 `35e8a98143a5fff4a7e32415a4da7415` passed exact-image,
+hardware-ready and boot-confirmation checks. Scene definitions, General sound,
+WiFi, selected brightness and NTP settings matched the pre-OTA snapshot.
+Physical combination events changed the active selection during verification;
+that selection was left untouched. Live browser checks verified the icon-only
+selector, all 32 locally rendered icons and 320–1440 px layouts without
+JavaScript errors or configuration writes. Both production and USB-experiment
+builds and the complete host suite passed. Evidence is kept locally under
+`backups/responsive-inputs/`.
+
+
+## Blank idle screen and inactivity sleep (0.5.4)
+
+Clock/Blank extend the existing scene-screen enum without changing the 3304-byte
+v3 record layout or existing enum values. Scene JSON now reports the stored and
+resolved screen choices. Blank skips frame updates and sets backlight PWM to
+zero, while preserving scene LED output. Clock/Blank temporary screen effects
+expire independently of LED effects; scene-switch overlays remain visible.
+
+General v2 adds a sleep timeout (0 disables, 1–1440 minutes, default 60).
+Migration preserves the v1 scene sound flag. Partial General saves validate the
+whole request before writing either field. An unsigned inactivity timer handles
+millis wrap. Debounced press edges and knob detents wake the outputs; held keys
+refresh the timer even without bindings. Wake preserves input action dispatch.
+Scene configuration changes and explicit web wake reset the countdown. Status
+polling does not. A timeout sets backlight and both LED groups to zero; HTTP,
+USB, inputs and saved lighting remain available. The sleep runtime and inactivity
+counter are not written to NVS.
+
+
+OTA MD5 `8ece9463961993d07bf367e5a092d3b8` passed exact-image and
+boot-confirmation checks. Both build environments, the host suite and browser
+checks passed. Live tests verified General v1 migration, strict/atomic partial
+updates, timer save/reload and 320–1440 px layouts without JavaScript errors.
+Blank kept scene LEDs on; temporary Clock/Blank effects expired correctly.
+Blank and a custom timer survived reboot. With a one-minute test timeout,
+telemetry reported the display/ring/keys all at zero while HTTP remained
+reachable; explicit web wake restored the scene's selected levels. Physical
+button/knob wake still needs hands-on observation. The timer was restored to
+60 minutes and the temporary scene removed; original scene definitions and
+sound preferences were preserved. Evidence: `backups/idle-sleep/`.

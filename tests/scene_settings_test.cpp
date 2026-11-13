@@ -5,6 +5,11 @@
 using namespace SceneSettings;
 int main() {
   auto s=defaults(); assert(valid(s)); assert(!remove(s,0));
+  auto blank=s;blank.scenes[0].screen=kBlank;assert(valid(blank));
+  blank.bindings[0].actions[0].screen=kBlank;assert(valid(blank));
+  blank.scenes[0].screen=kUnchanged;assert(!valid(blank));
+  blank.scenes[0].screen=kScreenCount;assert(!valid(blank));
+  blank=s;blank.bindings[0].actions[0].screen=kScreenCount;assert(!valid(blank));
   s.scenes[0].ring=Light{kSceneStatic,0xFF4400};
   s.scenes[0].keys=Light{kSceneRainbow,0x22FF66};
   assert(valid(s));

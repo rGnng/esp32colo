@@ -11,14 +11,14 @@ enum Type : uint8_t { kNone, kNextScene, kPreviousScene, kSwitchScene,
   kScreenChange, kScreenSet, kRingChange, kRingSet, kKeysChange, kKeysSet,
   kVolumeChange, kVolumeSet, kRainbow, kStatic, kToggleAwake, kSync, kTone, kTypeCount };
 enum Led : uint8_t { kInherit, kProportional, kFeedbackRainbow, kFeedbackStatic, kOff, kLedCount };
-enum Screen : uint8_t { kUnchanged, kClock, kScreenCount };
+enum Screen : uint8_t { kUnchanged, kClock, kBlank, kScreenCount };
 constexpr const char *kInputs[] = {"key1","key2","key3","key4","knob","open","rec"};
 constexpr const char *kGestures[] = {"single","double","triple","hold","hold_release","left","right","press_left","press_right"};
 constexpr const char *kTypes[] = {"none","next_scene","previous_scene","switch_scene",
   "screen_change","screen_set","ring_change","ring_set","keys_change","keys_set",
   "volume_change","volume_set","rainbow","static","toggle_awake","sync_time","tone"};
 constexpr const char *kLeds[] = {"inherit","proportional","rainbow","static","off"};
-constexpr const char *kScreens[] = {"unchanged","clock"};
+constexpr const char *kScreens[] = {"unchanged","clock","blank"};
 struct Action {
   uint8_t type = kNone, target = 0, led = kInherit, screen = kUnchanged;
   int16_t value = 0;
@@ -106,7 +106,7 @@ inline bool valid(const Stored &s) {
   if (s.version != 3 || !exists(s, 0) || !exists(s, s.active) || !validName(s.scenes[0].name) || std::strcmp(s.scenes[0].name, "Default")) return false;
   for (int i=0;i<kSceneCount;++i) {
     const auto &scene=s.scenes[i];
-    if (scene.used > 1 || (scene.used && (!validName(scene.name) || scene.screen != kClock || !validLight(scene.ring) || !validLight(scene.keys)))) return false;
+    if (scene.used > 1 || (scene.used && (!validName(scene.name) || scene.screen < kClock || scene.screen >= kScreenCount || !validLight(scene.ring) || !validLight(scene.keys)))) return false;
     if(scene.used){if(scene.icon>=32)return false;for(const auto &level:scene.levels)if(!validLevel(level))return false;}
     if (scene.used) for (int j=0;j<i;++j) if (s.scenes[j].used&&!std::strcmp(scene.name,s.scenes[j].name)) return false;
   }

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none" role="img" aria-labelledby="title description">
+  <title id="title">ColoPlay</title>
+  <desc id="description">A rounded square controller with four diagonal keys and a circular screen edged in color.</desc>
+  <defs>
+    <linearGradient id="shell" x1="24" y1="8" x2="104" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/>
+      <stop offset="1" stop-color="#dce4ef"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="41" y1="41" x2="87" y2="87" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#48ddcf"/>
+      <stop offset=".45" stop-color="#62a8ff"/>
+      <stop offset=".75" stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#f59fbd"/>
+    </linearGradient>
+  </defs>
+  <rect x="9" y="9" width="110" height="110" rx="31" fill="url(#shell)" stroke="#b7c4d7" stroke-width="2"/>
+  <rect x="12" y="12" width="104" height="104" rx="28" stroke="#fff" stroke-opacity=".7"/>
+  <path d="m29 29 11 11m48 0 11-11M29 99l11-11m48 0 11 11" stroke="#34445d" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="64" cy="64" r="23" fill="#172131" stroke="url(#ring)" stroke-width="4"/>
+</svg>

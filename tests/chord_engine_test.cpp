@@ -17,9 +17,9 @@ struct Sim {
 int main(){
   for(int count=1;count<=3;++count){Sim s;for(int i=0;i<count;++i)s.tap(3);s.step(300);s.expect(1,kComboFlag|3,count-1);}
   {Sim s;s.press(1);s.step(35);s.press(2);s.step(80);s.release(1);s.step(100);assert(s.events.empty());s.release(2);s.step(300);s.expect(1,kComboFlag|3,kSingle);}
-  {Sim s;s.press(3);s.step(80);s.step(520);s.expect(1,kComboFlag|3,kHold);s.release(1);s.step(800);s.expect(1,kComboFlag|3,kHold);s.release(2);s.expect(2,kComboFlag|3,kHoldRelease);s.step(500);assert(s.events.size()==2);}
-  {Sim s;s.press(3);s.step(80);s.release(1);s.step(1000);assert(s.events.empty());s.release(2);s.step(300);s.expect(1,kComboFlag|3,kSingle);}
-  {Sim s;s.press(1);s.step(81);s.press(2);s.step(30);s.release(3);s.step(300);assert(s.events.size()==2);for(auto e:s.events)assert(e.input<4&&e.gesture==kSingle);}
+  {Sim s;s.press(3);s.step(80);s.step(520);s.expect(1,kComboFlag|3,kHold);s.release(1);s.step(800);s.expect(2,kComboFlag|3,kHoldRelease);s.release(2);s.expect(2,kComboFlag|3,kHoldRelease);s.step(500);assert(s.events.size()==2);}
+  {Sim s;s.press(3);s.step(80);s.release(1);s.step(1000);s.expect(1,kComboFlag|3,kSingle);s.release(2);s.step(300);s.expect(1,kComboFlag|3,kSingle);}
+  {Sim s;s.press(1);s.step(81);s.press(2);s.step(30);s.release(3);s.step(300);s.expect(1,kComboFlag|3,kSingle);}
   {Sim s;s.tap(1);s.tap(2);s.step(300);assert(s.events.size()==2);for(auto e:s.events)assert(e.input<4);}
   {Sim s((1u<<3)|(1u<<7));s.press(3);s.step(20);s.press(4);s.step(80);s.release(7);s.step(300);s.expect(1,kComboFlag|7,kSingle);}
   {Sim s;s.tap(7);s.step(300);assert(s.events.size()==3);for(auto e:s.events)assert(e.input<4);}
@@ -31,7 +31,26 @@ int main(){
   {Sim s;s.press(3);s.step(80);s.set(kKnob,true);s.step(10,-2);s.release(3);s.step(300);assert(s.events[0].input==kKnob&&s.events[0].gesture==kPressLeft&&s.events[0].repeat==2);assert(s.events.back().input==(kComboFlag|3));}
   {Sim s;s.press(3);s.step(80);s.press(4);s.release(4);s.release(3);s.step(300);assert(s.events.size()==2);}
   // A second chord starting inside the click window may finish joining after it.
-  {Sim s;s.tap(3);s.step(240);s.press(1);s.step(20);s.press(2);s.step(80);s.release(3);s.step(300);s.expect(1,kComboFlag|3,kDouble);}
+  {Sim s;s.tap(3);s.step(210);s.press(1);s.step(20);s.press(2);s.step(80);s.release(3);s.step(300);s.expect(1,kComboFlag|3,kDouble);}
   {Sim s(0);s.tap(3);s.step(300);assert(s.events.size()==2);for(auto e:s.events)assert(e.input<4);}
+  // No multi-click or hold binding: trigger immediately after debounce.
+  {Sim s;GestureBindings bindings;bindings.combos[3]=1u<<kSingle;s.engine.configure(1u<<3,bindings);s.press(3);s.expect(1,kComboFlag|3,kSingle);s.step(1000);s.release(3);s.step(300);assert(s.events.size()==1);}
+  // Key 4 can stay held while Key 2/3 are pressed repeatedly, including across reconfiguration.
+  {Sim s;GestureBindings bindings;bindings.physical[kKey4]=1u<<kSingle;bindings.combos[10]=bindings.combos[12]=1u<<kSingle;const uint16_t flags=(1u<<10)|(1u<<12);s.engine.configure(flags,bindings);
+   s.press(8);s.step(1200);assert(s.events.empty());s.press(2);s.expect(1,kComboFlag|10,kSingle);
+   s.engine.configure(flags,bindings);s.release(2);s.press(4);s.expect(2,kComboFlag|12,kSingle);
+   s.release(4);s.press(2);s.expect(3,kComboFlag|10,kSingle);s.release(2);s.release(8);s.step(1000);assert(s.events.size()==3);}
+  // Unused potential modifiers keep an optional single-tap action on release.
+  {Sim s;GestureBindings b;b.physical[kKey4]=1u<<kSingle;b.combos[10]=1u<<kSingle;s.engine.configure(1u<<10,b);s.press(8);s.step(1000);assert(s.events.empty());s.release(8);s.expect(1,kKey4,kSingle);}
+  // Combo Hold is tracked only when bound; a short click has no 300 ms delay.
+  {Sim s;GestureBindings b;b.combos[3]=(1u<<kSingle)|(1u<<kHold);s.engine.configure(1u<<3,b);s.press(3);s.step(40);assert(s.events.empty());s.release(1);s.expect(1,kComboFlag|3,kSingle);s.release(2);}
+  {Sim s;GestureBindings b;b.combos[3]=(1u<<kSingle)|(1u<<kHold)|(1u<<kHoldRelease);s.engine.configure(1u<<3,b);s.press(3);s.step(600);s.expect(1,kComboFlag|3,kHold);s.release(1);s.expect(2,kComboFlag|3,kHoldRelease);s.release(2);assert(s.events.size()==2);}
+  // With Double but no Triple, the second release resolves immediately.
+  {Sim s;GestureBindings b;b.combos[3]=(1u<<kSingle)|(1u<<kDouble);s.engine.configure(1u<<3,b);s.tap(3);assert(s.events.empty());s.tap(3);s.expect(1,kComboFlag|3,kDouble);}
+  // Hold-release alone tracks the threshold without emitting Hold or short clicks.
+  {Sim s;GestureBindings b;b.combos[3]=1u<<kHoldRelease;s.engine.configure(1u<<3,b);s.tap(3);s.step(300);assert(s.events.empty());s.press(3);s.step(600);assert(s.events.empty());s.release(1);s.expect(1,kComboFlag|3,kHoldRelease);s.release(2);assert(s.events.size()==1);}
+  // Preserve the assembly window only when a larger configured group could win.
+  {Sim s;GestureBindings b;b.combos[3]=b.combos[7]=1u<<kSingle;s.engine.configure((1u<<3)|(1u<<7),b);s.press(3);s.step(20);assert(s.events.empty());s.press(4);s.expect(1,kComboFlag|7,kSingle);s.release(7);assert(s.events.size()==1);}
+  {Sim s;GestureBindings b;b.combos[3]=b.combos[7]=1u<<kSingle;s.engine.configure((1u<<3)|(1u<<7),b);s.press(3);s.step(79);assert(s.events.empty());s.step(1);s.expect(1,kComboFlag|3,kSingle);s.release(3);assert(s.events.size()==1);}
   std::cout<<"PASS combo clicks/holds, staggered/exact groups, member suppression, fallback, cancellation, boot-held, rollover and knob independence\n";
 }

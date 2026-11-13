@@ -11,6 +11,8 @@
 #include "scene_service.h"
 #include "chord_engine.h"
 #include "scene_icons.h"
+#include "general_service.h"
+#include "idle_timer.h"
 
 #include <Adafruit_NeoPixel.h>
 #include <TFT_eSPI.h>
@@ -71,6 +73,8 @@ int32_t gEncoderEdges = 0, gKnobPosition = 0;
 int16_t gLastEncoder = 0;
 RotaryDetents gDetents;
 ChordEngine gGestures;
+IdleTimer gIdle;
+uint32_t gSleepMinutes=60;
 uint32_t gSceneEpoch = 0;
 uint32_t gLastPage = 0, gLastFrame = 0, gFrames = 0, gLastSensors = 0;
 uint32_t gLastMetrics = 0, gPreviousFrames = 0, gPreviousTe = 0;
@@ -102,8 +106,11 @@ void setStage(Stage stage) {
 
 void IRAM_ATTR onTe() { ++gTePulses; }
 
+bool sceneOverlayVisible(uint32_t now){return gSceneOverlayUntil&&static_cast<int32_t>(gSceneOverlayUntil-now)>0;}
+bool screenVisible(uint32_t now){return gAwake&&(sceneOverlayVisible(now)||SceneService::screen()!=SceneSettings::kBlank);}
+
 void setBacklight() {
-  if (gBacklight) ledcWrite(0, gAwake ? gScreenLevel * 1023 / 100 : 0);
+  if (gBacklight) ledcWrite(0, screenVisible(millis()) ? gScreenLevel * 1023 / 100 : 0);
 }
 
 void updateBrightness() {
@@ -216,8 +223,8 @@ void setupEncoder() {
 
 void pollInputs(uint32_t now) {
   if (gSceneEpoch != SceneService::epoch()) {
-    gSceneEpoch = SceneService::epoch(); gGestures.configure(SceneService::combinations());
-    gAwake = true; updateBrightness();
+    gSceneEpoch = SceneService::epoch(); gGestures.configure(SceneService::combinations(),SceneService::gestureBindings());
+    gAwake = true; gIdle.activity(now); updateBrightness();
     if(gSceneShown!=SceneService::activeScene()){gSceneShown=SceneService::activeScene();gSceneOverlayUntil=now+1600;gLastFrame=now-200;}
   }
   int32_t delta = 0;
@@ -240,20 +247,25 @@ void pollInputs(uint32_t now) {
   gGestures.tick(raw,delta,now,[&](int input,int gesture,int repeat) {
     if (count<32) events[count++]={input,gesture,repeat};
   });
+  bool activity=delta!=0,held=false;
   for (int i=0;i<SceneSettings::kInputCount;++i) {
     const bool down=gGestures.down(i);
-    if (down&&!gKeys[i].pressed) ++gKeys[i].presses;
+    if (down&&!gKeys[i].pressed) {++gKeys[i].presses;activity=true;}
+    held|=down;
     gKeys[i].pressed=down;
   }
+  if(held||activity)gIdle.activity(now);
+  const bool wakeByInput=activity&&!gAwake;
   for (int i=0;i<count;++i) {
     SceneService::event(events[i].input,events[i].gesture,events[i].repeat);
     if (gSceneEpoch!=SceneService::epoch()) {
-      gSceneEpoch=SceneService::epoch(); gGestures.configure(SceneService::combinations());
-      gAwake=true;updateBrightness();
+      gSceneEpoch=SceneService::epoch(); gGestures.configure(SceneService::combinations(),SceneService::gestureBindings());
+      gAwake=true;gIdle.activity(now);updateBrightness();
       if(gSceneShown!=SceneService::activeScene()){gSceneShown=SceneService::activeScene();gSceneOverlayUntil=now+1600;gLastFrame=now-200;}
       break;
     }
   }
+  if(wakeByInput){gAwake=true;gLastFrame=now-200;updateBrightness();DeviceLog::println("[sleep] wake by input");}
 }
 
 void drawClock() {
@@ -269,9 +281,10 @@ void drawClock() {
 }
 
 void render(uint32_t now) {
-  if (!gDisplay || !gAwake) return;
+  setBacklight();
+  if (!gDisplay || !screenVisible(now)) return;
   gCanvas.fillSprite(kBackground);
-  if(gSceneOverlayUntil&&static_cast<int32_t>(gSceneOverlayUntil-now)>0) {
+  if(sceneOverlayVisible(now)) {
     gCanvas.drawXBitmap(88,60,SceneIcons::kBitmaps[SceneService::icon()],64,64,TFT_WHITE);
     const String name=SceneService::name();
     const int font=gCanvas.textWidth(name,4)>200?2:4;
@@ -351,7 +364,7 @@ int applyAction(const SceneSettings::Action &a, int repetitions) {
       result=AudioDemo::snapshot().volume; break;
     case kRainbow: gLighting.mode=LightingSettings::kRainbow; lightingChanged=true; break;
     case kStatic: gLighting.mode=LightingSettings::kStatic; gLighting.color=a.color; lightingChanged=true; break;
-    case kToggleAwake: gAwake=!gAwake; break;
+    case kToggleAwake: gAwake=!gAwake;gIdle.activity(millis());break;
     case kSync: ClockService::requestSync(); break;
     case kTone: AudioDemo::beep(a.value,200); break;
     default: break;
@@ -378,7 +391,7 @@ void begin() {
   bool initial[SceneSettings::kInputCount];
   for (int i=0;i<SceneSettings::kInputCount;++i) initial[i]=gKeys[i].pressed;
   gSceneShown=SceneService::activeScene();gSceneOverlayUntil=0;
-  gGestures.seed(initial,millis()); gGestures.configure(SceneService::combinations()); gSceneEpoch=SceneService::epoch();
+  gGestures.seed(initial,millis()); gGestures.configure(SceneService::combinations(),SceneService::gestureBindings()); gSceneEpoch=SceneService::epoch();
   pinMode(Board::kCharge, INPUT_PULLUP);
   setStage(kLedPower);
   pinMode(Board::kLedPowerEnable, OUTPUT);
@@ -426,6 +439,7 @@ void begin() {
   setStage(kAudio);
   AudioDemo::begin();
   gReady = true;
+  gSleepMinutes=GeneralService::sleepTimeoutMinutes();gIdle.configure(gSleepMinutes,millis());
   gLastPage = gLastMetrics = millis();
   setStage(kFirstFrame);
   render(millis());
@@ -438,7 +452,14 @@ bool ready() { return gReady; }
 void tick() {
   if (!gReady || gPaused) return;
   const uint32_t now = millis();
+  if(gSleepMinutes!=GeneralService::sleepTimeoutMinutes()){
+    gSleepMinutes=GeneralService::sleepTimeoutMinutes();gIdle.configure(gSleepMinutes,now);
+  }
   pollInputs(now);
+  if(gAwake&&gIdle.due(now)){
+    gAwake=false;gSceneOverlayUntil=0;setBacklight();animateLeds(now);
+    DeviceLog::println("[sleep] inactivity timeout; screen and LEDs off");
+  }
   // Debounce knob writes so continuous turning does not wear NVS.
   if (gLightingDirty && now - gLightingChangedAt >= 1500) {
     gLightingStored = saveLighting(gLighting);
@@ -487,6 +508,7 @@ String statusJson() {
   json += ",\"page\":" + String(gPage) + ",\"page_name\":\"" + kPages[gPage] + "\"";
   json += ",\"auto\":" + String(gAuto ? "true" : "false");
   json += ",\"awake\":" + String(gAwake ? "true" : "false");
+  json += ",\"idle_ms\":" + String(gIdle.elapsed(millis()));
   json += ",\"paused\":" + String(gPaused ? "true" : "false");
   json += ",\"display\":{\"driver\":\"GC9A01\",\"width\":240,\"height\":240";
   json += ",\"scene_overlay\":"+String(gSceneOverlayUntil&&static_cast<int32_t>(gSceneOverlayUntil-millis())>0?"true":"false");
@@ -495,7 +517,7 @@ String statusJson() {
   json += ",\"te_pulses\":" + String(gTePulses) + ",\"te_hz\":" + String(gTeHz, 1);
   json += ",\"brightness\":" + String(gLighting.screen);
   json += ",\"auto_brightness\":" + String(gLighting.autoScreen ? "true" : "false");
-  json += ",\"effective_brightness\":" + String(gAwake ? gScreenLevel : 0) + ",\"spi_hz\":40000000}";
+  json += ",\"effective_brightness\":" + String(screenVisible(millis()) ? gScreenLevel : 0) + ",\"spi_hz\":40000000}";
   json += ",\"encoder\":{\"ready\":" + String(gEncoder ? "true" : "false");
   json += ",\"edges\":" + String(gEncoderEdges) + ",\"position\":" + String(gKnobPosition);
   json += ",\"edges_per_detent\":" + String(RotaryDetents::kEdgesPerDetent);
@@ -607,6 +629,7 @@ bool configure(WebServer &server, String &error) {
     gLedTestUntil = millis() + 5000;
   }
   gAwake = awake;
+  if(server.hasArg("awake"))gIdle.activity(millis());
   updateBrightness();
   if (server.hasArg("volume")) AudioDemo::setVolume(volume);
   if (tone) AudioDemo::beep(tone, duration);

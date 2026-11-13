@@ -1,6 +1,6 @@
 # Desktop gadget guide
 
-Current baseline: **0.5.1-wifi-dialog**. The gadget is configured through the **General**,
+Current baseline: **0.5.4-idle-sleep**. The gadget is configured through the **General**,
 **Scenes** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
 buttons are 14 px, with larger headings and log text. [API](api.md), [development](development.md), and
@@ -74,6 +74,28 @@ counts, browser-session min/max and dark/bright capture. Endpoints default to
 0 and 1200; save distinct values within 0–4095. Either sensor polarity works.
 Readings are not lux, and custom ADC scaling is not factory hardware evidence.
 
+### Sound
+
+**Scene change sound** enables a short cue when the active scene changes.
+Next scene uses a higher tone (880 Hz), Previous a lower tone (440 Hz), including
+wraparound. Direct scene selection follows numeric scene order. Cues last
+90 ms. The switch defaults on and is saved to NVS. Boot, unchanged selection
+and failed saves are silent.
+
+### Sleep
+
+**Sleep after (minutes)** controls inactivity sleep. The default is **60 minutes
+(1 hour)**; choose 1–1440 minutes or **0** to disable it, then **Save**. The timer
+is stored in NVS. Changing its value starts a fresh countdown. Debounced button
+presses, held buttons and complete knob detents reset inactivity. Any button
+press or knob turn wakes the gadget, including unbound controls. Changing scenes
+or their configuration also wakes it. Web telemetry polling does not keep it awake.
+
+Sleep turns off the display backlight, ring and button LEDs, preserving the
+saved brightness and Auto selections. WiFi, USB, OTA and input handling remain
+available. **Toggle screen / LEDs** in Device can also wake it. A scene whose
+idle screen is Blank still keeps its display off after waking; its LEDs resume.
+
 ## Scenes
 
 **Default** always exists, cannot be deleted or renamed, and its bindings are
@@ -84,10 +106,11 @@ The active scene is
 saved and restored at boot. Deleting the active scene returns to Default;
 saved scene-switch actions targeting a deleted scene are retargeted to Default.
 A scene switch clears pending gestures and temporary effects and wakes the screen.
-It shows the scene icon and name for about 1.6 seconds, then returns to Clock.
+It shows the scene icon and name for about 1.6 seconds, then returns to the saved
+Clock or Blank idle screen.
 
 The scene settings panel has a **Scene icon** picker with 32 bundled Bootstrap
-icons, **Idle screen**, **Ring color**, **Button color**, and brightness controls
+icons (icon-only button; hover for its name), **Idle screen**, **Ring color**, **Button color**, and brightness controls
 for screen, ring and buttons, followed by the key binding table. Each LED group independently uses
 **Static color** with its own picker, **Rainbow**, or **Use General**. Click
 **Save settings** to persist the scene. Colors apply when that scene is active;
@@ -141,24 +164,41 @@ Available events are:
 | Center knob press | Single, double, triple, hold, hold then release |
 | Center knob rotation | Left, right, press + left, press + right |
 
-Inputs debounce for 25 ms. Single/double clicks resolve after a 300 ms gap;
-triple resolves after the third release. Hold fires once at 600 ms and release
-fires the separate hold-release binding. Hold does not also generate a click.
-Press-and-turn consumes the knob's pending click/release; turning before the
-hold threshold also suppresses Hold. A Hold that has already fired cannot be
-undone by a later turn. Batched rotary notches multiply adjustment actions.
+Inputs debounce for 25 ms. Recognition uses the active scene's bindings and
+Global Default bindings. A single-only input fires on debounced press. If Hold
+or Hold then release is configured, a short single fires on release; a hold is
+tracked only when one of those bindings exists and reaches its threshold at
+600 ms. Hold does not also generate a click. Multi-clicks wait up to 300 ms
+between clicks only when Double or Triple is configured. Double without Triple
+resolves on the second release; Triple resolves on the third release. Unmapped
+gestures are not emitted.
+
+Buttons that could be combination members defer their individual single until
+release, allowing another key to join. The knob also defers its single when a
+press-and-turn binding exists. Press-and-turn consumes its pending click/release;
+turning before the hold threshold suppresses Hold. A Hold that has already fired
+cannot be undone by a later turn. Batched rotary notches multiply adjustment actions.
 
 Choose **Button combination** in the Key selector and tick at least two of
-Buttons 1–4. After debounce, buttons must join within 80 ms and overlap. The
-exact group is matched, so 1+2+3 does not fire a smaller 1+2 binding. A matched
-combination consumes its members' individual gestures until all are released.
-Hold begins 600 ms after the full group forms; hold-release waits for all
-members to release. Single/double/triple use the existing click window. When no
-combination matches, ordinary button handling continues. One combination is
-recognized at a time; unrelated buttons and knob rotation keep normal handling.
+Buttons 1–4. An exact group resolves after debounce immediately unless a
+larger configured group could still join; that ambiguity allows an 80 ms assembly
+window. A configured 1+2+3 takes precedence over 1+2 when it joins within that
+window. A matched combination consumes its members' individual gestures.
+
+Release the trigger member to rearm, keeping the common key held: for example,
+hold Button 4 and tap Button 2 / Button 3 repeatedly for separate commands.
+This also works across scene changes when the next scene has those bindings.
+Held members cannot trigger a new group without a fresh press edge. Boot-held
+buttons remain suppressed until released.
+
+Combination click/hold timing follows the same binding-aware rules as individual
+keys. Configured Hold starts 600 ms after the full group forms; Hold then release
+fires when the first member is released. When no combination matches, ordinary
+button handling continues. One combination is recognized at a time; unrelated
+buttons and knob rotation keep normal handling.
 
 On this unit, **Button 1 + Button 2 / Single press → Next scene** was added as a
-Global example for physical testing. Press together and release both to try it.
+Global example for physical testing. Press together to try it, or keep one held and tap the other to repeat.
 It is an editable saved binding, not a hardcoded input action.
 
 These mappings apply while the firmware runs. KEY1 application recovery and
@@ -167,18 +207,25 @@ REC/knob ROM-download behavior during reset remain physical recovery mechanisms.
 ### Ordered actions and effects
 
 Add up to three commands in the row editor, reorder them, then **Save binding**.
-Use the table's **Delete** control to clear a binding. Available device actions include:
+Use the table's **Delete** control to clear a binding. The currently implemented
+actions belong to these Device groups:
 
-- Switch to a scene, or cycle to the next/previous existing scene.
-- Adjust/set screen, ring, key LED or gadget speaker percentage.
-- Select rainbow/static LEDs, toggle screen/LED sleep, request NTP sync, or play a tone.
-- No device action, useful when only attaching a screen or LED effect.
+| Group | Actions |
+|---|---|
+| Scenes | Switch to a scene; Next/Previous Scene |
+| Display | Adjust/Set Screen Brightness |
+| Lighting | Adjust/Set Ring or Button Brightness; Rainbow; Static Color |
+| Speaker | Adjust/Set Device Speaker Volume; Play Tone |
+| System | Toggle Screen and LEDs; Synchronize Time |
+| No command | No device action, for screen/LED effects alone |
 
 Adjustments take a signed per-step value; setters use an absolute percentage.
 Speaker actions control this gadget's ES8311 output, not the computer's volume.
-Computer data sources/actions belong to the later companion-app phase.
+Serial/Bluetooth actions, pairing and remote playback/volume feedback are
+specified in the [Tab5 integration plan](tab5-integration.md); they are not yet
+available in this firmware.
 
-Each action can keep the current screen or select **Clock**, and can retain
+Each action can keep the current screen or select **Clock** or **Blank**, and can retain
 lighting or temporarily show rainbow, static color, darkness, or proportional
 ring fill. Proportional fill uses the returned percentage from a brightness or
 speaker action, with partial LED intensity at the boundary. It affects the ring;
@@ -197,10 +244,12 @@ Last-input telemetry shows the recognized gesture and last action/result.
 
 ### Standby and screen behavior
 
-Clock is currently the only implemented screen behavior and is stored as each
-scene's idle screen. Action screen overrides are routed through the scene
-service and return to that standby after the effect duration. The display uses
-centered Inter hours/minutes only. A colon appears once valid time has synced
+Each scene's **Idle screen** can be **Clock** or **Blank**. Blank turns off the
+display backlight and stops frame updates while leaving the scene's lighting
+active. Scene-switch icon/name overlays still appear briefly. Actions can also
+apply a temporary Clock or Blank screen effect, then return to the saved idle
+screen after the effect duration. The Clock display uses centered Inter
+hours/minutes only. A colon appears once valid time has synced
 since boot or the last NTP server change; it is not a WiFi connectivity indicator.
 There is no date, timezone label, seconds, sync text or decorative ring.
 

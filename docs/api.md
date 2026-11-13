@@ -17,6 +17,8 @@ not JSON request bodies. Successful configuration responses are JSON.
 | `GET /assets/<name>-<hash>.css` / `.js` | Local static styles/scripts | None; gzip, immutable cache |
 | `GET /api/status` | Full device telemetry | None; JSON |
 | `GET /api/log` | Bounded application log; optional `after` byte cursor | None; JSON, no-store |
+| `GET /api/general` | General sound preferences | None; JSON |
+| `POST /api/general` | Save General sound preferences | None; JSON |
 | `GET /api/scenes` | Saved scene catalog, bindings, limits and state | None; JSON |
 | `POST /api/scenes` | Scene CRUD, binding saves, activation and saved-gesture execution | None; scene config JSON |
 | `POST /api/lighting` | General lighting, audio test and sleep controls | None; hardware JSON |
@@ -53,9 +55,10 @@ curl http://coloplay.local/api/status
 | `wifi` | Connection, stored/current SSID, IP, RSSI, MAC; no password |
 | `buttons` | Debounced names, pins, pressed state and counters after hardware startup; early raw inputs during startup/recovery |
 | `clock` | Primary/fallback servers, valid local/Unix time, sync history and SNTP state |
+| `general` | Persistent `scene_change_sound`, `sleep_timeout_minutes` and `stored` |
 | `scene` | Active scene, standby/current screen, NVS state, last event/action/result and temporary feedback |
 | `usb` | Configured/active mode, stages, link, counters, DHCP and lease state |
-| `hardware` | Startup stage, page/tour, awake/paused state and peripheral objects |
+| `hardware` | Startup stage, page/tour, awake/paused state, `idle_ms` since physical activity and peripheral objects |
 | `hardware.display` | Framebuffer, frame/FPS/TE counters, selected/automatic/effective screen brightness |
 | `hardware.encoder` | Raw edges, decoded position, pin levels and `edges_per_detent=2` |
 | `hardware.leds` | Ring/key brightness and Auto flags, effective levels, mode/color and SPI transfer errors/counters |
@@ -80,6 +83,21 @@ last good sample is retained for up to five seconds. Values are not lux.
 Screen capture is disabled in 0.4.3: `/api/screenshot.bmp` returns 404 and the
 web interface no longer requests display images.
 
+## General preferences
+
+`GET /api/general` and `status.general` return `scene_change_sound` (boolean,
+default true), `sleep_timeout_minutes` (integer, default 60) and `stored`.
+POST accepts either or both of `scene_change_sound=0|1` and
+`sleep_timeout_minutes=0..1440`. Omitted fields retain their saved values;
+empty/invalid requests return 400 without changing either setting. Sleep value
+0 disables the timer. Save happens before apply. Changing the timeout restarts
+its countdown; polling status does not. Physical buttons/knob reset inactivity
+and wake the outputs; held buttons prevent inactivity sleep. The sound flag
+controls scene transitions only. `hardware.audio.last_tone_hz` and
+`last_tone_duration_ms` describe the last successfully written tone; startup and
+manual audio tests also update those fields. Next/Previous cues are 880/440 Hz
+for 90 ms and keep their direction at wraparound.
+
 ## Scenes and gesture bindings
 
 `GET /api/scenes` returns `state`, `limits`, recognizer `timing`, the input/
@@ -95,6 +113,11 @@ colors use `#RRGGBB`. `catalog.lighting_modes` lists these choices. Omitted
 lighting fields retain their saved values, including during rename requests.
 `state` and `/api/status.scene` include the active scene's same lighting and icon fields.
 `hardware.display.scene_overlay` is true while the switch icon/name is displayed.
+`standby_screen` accepts `clock` or `blank`; omission retains the current choice.
+`state.screen` reports the resolved Clock/Blank behavior, including temporary
+screen effects. Blank switches off only the display and reports effective
+screen brightness 0; inactivity sleep sets `hardware.awake=false` and all three
+effective brightness channels to 0. Neither changes saved percentages.
 Brightness/Auto can inherit General or be overridden per scene; action LED
 feedback overlays scene lighting, then expires back to it. Legacy v1 scenes migrate with both groups in
 `general`, retaining all names, IDs, bindings and the active selection.
@@ -162,7 +185,7 @@ For each action index 0–2 send `a0_type`, `a0_value`, `a0_target`, `a0_led`,
 | `value` | Adjustments -100…100 per step; setters 0…100%; tone 100…4000 Hz |
 | `target` | Existing scene ID for `switch_scene` |
 | `led` | `inherit`, `proportional`, `rainbow`, `static`, `off` |
-| `screen` | `unchanged` or `clock` |
+| `screen` | `unchanged`, `clock` or `blank` |
 | `color` | `#RRGGBB`; initial effect color `#40ffaa` |
 | `feedback_ms` | 250…10000; default 1500 |
 
@@ -170,8 +193,8 @@ Proportional feedback is valid only for percentage-producing brightness/speaker
 actions. It fills the ring from their returned percentage; key LEDs keep General
 lighting. Other LED effects affect both groups at their configured brightness.
 Temporary effects expire back to General lighting and the scene's standby
-screen. Screen overrides route through the scene service; Clock is currently
-the only implementation. Scene switching ends the gesture's action list.
+screen. Screen overrides route through the scene service; Clock and Blank are
+implemented. Scene switching ends the gesture's action list.
 Computer volume/data integration is deferred to the companion-app phase.
 
 ```bash

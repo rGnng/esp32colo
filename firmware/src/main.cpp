@@ -16,6 +16,7 @@
 #include "http_ota.h"
 #include "clock_service.h"
 #include "scene_service.h"
+#include "general_service.h"
 #include "usb_network.h"
 #include "usb_experiment.h"
 #include "web_ui.h"
@@ -27,7 +28,7 @@ constexpr const char *kHostname = "coloplay";
 #ifdef COLOPLAY_USB_CONCURRENCY_TEST
 constexpr const char *kFirmwareVersion = "0.4.1-usb-concurrency-test";
 #else
-constexpr const char *kFirmwareVersion = "0.5.1-wifi-dialog";
+constexpr const char *kFirmwareVersion = "0.5.4-idle-sleep";
 #endif
 constexpr const char *kPrefsNamespace = "wifi";
 constexpr uint32_t kWifiRetryMs = 10000;
@@ -188,6 +189,7 @@ String statusJson() {
   json += "\"buttons\":" + buttonStateJson() + ",";
   json += "\"clock\":" + ClockService::statusJson() + ",";
   json += "\"usb\":" + UsbNetwork::statusJson() + ",";
+  json += "\"general\":" + GeneralService::statusJson() + ",";
   json += "\"scene\":" + SceneService::statusJson() + ",";
   json += "\"hardware\":" + HardwareDemo::statusJson();
   json += "}";
@@ -258,6 +260,12 @@ void setupHttp() {
   server.on("/", HTTP_GET, [] { server.send_P(200, "text/html; charset=utf-8", kDemoPage); });
   server.on("/api/status", HTTP_GET, [] {
     server.send(200, "application/json", statusJson());
+  });
+  server.on("/api/general",HTTP_GET,[]{server.send(200,"application/json",GeneralService::statusJson());});
+  server.on("/api/general",HTTP_POST,[]{
+    String error;
+    if(!GeneralService::configure(server,error)){server.send(400,"application/json","{\"error\":\""+jsonEscape(error)+"\"}");return;}
+    server.send(200,"application/json",GeneralService::statusJson());
   });
   server.on("/api/clock", HTTP_GET, [] {
     server.send(200, "application/json", ClockService::statusJson(true));
@@ -435,6 +443,7 @@ void setup() {
   gRecoveryMode = gBootAttempts >= 2 || digitalRead(Board::kKey1) == LOW;
 
   loadWifiCredentials();
+  GeneralService::begin();
   ClockService::begin();
   SceneService::begin(HardwareDemo::applyAction);
   UsbNetwork::loadSettings();

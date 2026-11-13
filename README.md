@@ -1,5 +1,7 @@
 # LifeSmart/ColoLight ColoPlay (C169)
 
+<img src="firmware/web/coloplay.svg" width="96" height="96" alt="ColoPlay project icon">
+
 Custom ESP32-S3 firmware and hardware reference for the **LifeSmart/ColoLight
 ColoPlay C169**. Factory firmware uses the name **ColoPLAY V1**. Hardware
 bring-up is complete; this repository is the working baseline for feature
@@ -11,7 +13,7 @@ development. The build target and default hostname remain `coloplay`.
 
 ## Current baseline
 
-Source version: **`0.5.1-wifi-dialog`**. Documentation consolidated on **2026-11-13**.
+Source version: **`0.5.4-idle-sleep`**. Documentation consolidated on **2026-11-13**.
 Per-scene lighting was OTA-verified on this unit, including legacy scene
 migration, independent mode/color saves and preserved General settings.
 The working firmware provides:
@@ -25,10 +27,13 @@ The working firmware provides:
   served locally over WiFi or USB CDC-ECM, plus selectable USB serial/JTAG.
 - Application-only HTTP OTA and ArduinoOTA through the preserved factory bootloader.
 - Persistent scenes with customizable button/knob gestures, simultaneous button
-  combinations, Global Default bindings and ordered actions.
+  combinations, Global Default bindings and ordered actions. Unused multi-click/hold
+  gestures add no delay; a held common key can anchor repeated combinations.
 - Per-scene brightness/Auto overrides and a local 32-icon picker; scene switches
-  briefly show the icon and name on the display.
-  Default is protected; Clock is the first scene standby/action screen behavior.
+  briefly show the icon and name on the display, with optional direction-specific sound cues.
+  Default is protected; idle screens can show Clock or Blank.
+- Inactivity sleep turns off the display and LEDs after one hour by default,
+  with a saved timer and wake on any button or knob movement.
 
 The display, speaker, ring and four key LEDs have been confirmed on the unit.
 Live checks have verified input events, PSRAM, microphone streaming, light
@@ -45,6 +50,7 @@ Each current topic has one primary guide:
 | Use the clock, lights, sensors, WiFi and USB | [Firmware guide](docs/firmware.md) |
 | Set up tools, back up, build, update or recover | [Flashing and recovery](docs/flash.md) |
 | Integrate controls or read telemetry | [HTTP API](docs/api.md) |
+| Plan Serial/Bluetooth actions, Tab5 pairing and media feedback | [Tab5 integration plan](docs/tab5-integration.md) |
 | Understand source, settings, tests and constraints | [Development guide](docs/development.md) |
 | Inspect recovered hardware assignments | [Factory-derived GPIO map](docs/gpio-map.md) |
 | Inspect the original backup and factory restore procedure | [Factory firmware](docs/factory-firmware.md) |

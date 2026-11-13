@@ -108,7 +108,7 @@ void run(void *) {
     gState.rxFrames += frames;
     if (txResult != ESP_OK || rxResult != ESP_OK ||
         written != sizeof(tx) || received != sizeof(rx)) ++gState.ioErrors;
-    if (started && written) ++gState.tonesPlayed;
+    if (started && written){++gState.tonesPlayed;gState.lastToneHz=frequency;gState.lastToneDurationMs=duration;}
     gState.rms = rms;
     gState.peak = peak;
     gState.dbfs = rms > 0 ? fmaxf(-96, 20 * log10f(rms / 32768)) : -96;
@@ -268,6 +268,7 @@ String statusJson() {
   json += ",\"tx_frames\":" + String(s.txFrames);
   json += ",\"io_errors\":" + String(s.ioErrors);
   json += ",\"tones_played\":" + String(s.tonesPlayed);
+  json += ",\"last_tone_hz\":"+String(s.lastToneHz)+",\"last_tone_duration_ms\":"+String(s.lastToneDurationMs);
   json += ",\"tone_active\":" + String(s.tone ? "true" : "false");
   json += ",\"mic_rms\":" + String(s.rms, 2);
   json += ",\"mic_peak\":" + String(s.peak, 2);

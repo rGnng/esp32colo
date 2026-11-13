@@ -1,6 +1,8 @@
 # Embedded web configuration
 
 Editable sources are `index.html`, `app.css`, `app.js` and `update.html`.
+`coloplay.svg` is the project icon, sidebar logo and favicon on both pages.
+It is bundled as a local, content-hashed SVG asset with the firmware.
 `bootstrap.scss` selects a small subset of Bootstrap 5.3.8 from the MIT-licensed
 sources in `vendor/bootstrap/`; `bootstrap.min.css` is checked in so normal
 firmware builds need neither Sass, npm nor network access.
