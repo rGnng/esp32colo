@@ -49,8 +49,7 @@ Each current topic has one primary guide:
 | Understand earlier bring-up decisions | [Bring-up history](docs/history/bring-up.md) |
 
 The old [hardware-demo](docs/hardware-demo.md) and [clock-and-usb](docs/clock-and-usb.md)
-paths remain as pointers. The [former report path](cololight-firmware-report.html)
-now points to the factory evidence. The [RAM-only LCD probe](firmware/lcd_probe/README.md)
+paths remain as pointers. The [RAM-only LCD probe](firmware/lcd_probe/README.md)
 is optional research material.
 
 The opt-in [USB CDC/HID/JTAG experiment](docs/usb-concurrency-test.md) includes
