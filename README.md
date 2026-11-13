@@ -8,4 +8,11 @@ The physical board variant remains unverified. No firmware has been run on the d
 
 An experimental [LCD probe](firmware/lcd_probe/README.md) attempts controller ID/status reads using the reference wiring. It is designed to run from RAM through the ROM downloader, without overwriting factory flash. Panel readback and exact controller identification are not guaranteed.
 
+## Working documents
+
+- [GPIO map](docs/gpio-map.md) — display, audio, buttons, LEDs and power signals read from the published schematics.
+- [Factory firmware](docs/factory-firmware.md) — full 16 MB backup, partition table and firmware component analysis.
+- [Flash guide](docs/flash.md) — backup, build and flash procedure.
+- [Firmware](firmware/) — minimal PlatformIO bring-up image (WiFi + status page + OTA).
+
 Manufacturer documentation: [ColoPLAY hardware](https://x.cololight.com/mweb/docs/en/opensource/coloplay_hw/).

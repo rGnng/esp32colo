@@ -3,6 +3,13 @@ build/
 managed_components/
 sdkconfig.old
 
+# PlatformIO
+.pio/
+
+# Local credentials and images containing them
+firmware/include/secrets.h
+firmware/*-merged.bin
+
 # Local environments and device backups
 .venv/
 __pycache__/
