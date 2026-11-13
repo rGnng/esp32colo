@@ -1,0 +1,77 @@
+# ColoPLAY LCD probe
+
+Experimental ESP32-S3 diagnostic for the **published ColoPLAY V1 pinout**. The physical device has not been identified or tested. This reads possible controller responses; it does not promise an exact model ID.
+
+The application is built entirely for RAM, without SPI flash or PSRAM support. Load it with the ROM downloader's `load_ram` command. It does not replace the factory firmware, and a normal power cycle starts the existing firmware again. ESP-IDF labels RAM application builds experimental. Device security settings may prevent RAM downloads.
+
+## Why detection is uncertain
+
+The [screen-adapter schematic](https://x.cololight.com/mweb/docs/en/assets/files/Colo%20Play_Screen_Project-99c3422ebbed0e1264a28aece792130e.pdf) shows a single LCD data line and no separate MISO. It does not specify the controller or the panel's interface straps. Some controllers can return register data on the shared data line; others require an unconnected output or disable reads in the selected interface mode. The absence of a response does not identify the controller or prove the display is faulty.
+
+The probe sends common DCS read commands (`04`, `09`, `0A`, `0B`, `0C`, `DA`, `DB`, `DC`) with a slow software SPI clock. GPIO13 is released to input for the response. Each read is repeated with weak pull-up and pull-down bias, alongside captures with CS inactive. All eight captured bytes are printed, including any dummy bits and undriven trailing bits. Different commands/controllers can need different dummy-cycle counts; the program makes no automatic ID-to-driver assignment.
+
+No LCD pins are configured at startup. `probe` and `reset` configure the reference pins and leave the backlight off. No vendor-specific initialization tables, panel voltages, or gamma settings are sent.
+
+## Reference pins
+
+From the [main-board schematic, pages 1–2](https://x.cololight.com/mweb/docs/en/assets/files/Colo%20Play_Main_Project-6e07adc16d0874f1845753f5d655f4af.pdf):
+
+| Signal | GPIO |
+|---|---:|
+| LCD_RS / D-C | 11 |
+| LCD_CS | 12 |
+| LCD_MOSI / shared data | 13 |
+| LCD_CLK | 14 |
+| LCD_TE | 17 (not used by the probe) |
+| LCD_BLK / backlight transistor | 18 |
+| LCD_REST | 45 |
+
+## Build
+
+Use ESP-IDF 5.5.6 with its ESP32-S3 Xtensa toolchain and Python environment activated:
+
+```sh
+cd firmware/lcd_probe
+idf.py -DIDF_TARGET=esp32s3 build
+```
+
+Output: `build/coloplay_lcd_probe.bin`. CMake rejects a different chip target or a configuration that would build a flash application.
+
+ESP-IDF may print generic flash instructions after the build. Use the RAM-loading command below for this diagnostic.
+
+## Run from RAM
+
+First confirm the physical board matches the reference pinout. On that design, enter ROM download mode by removing all power, holding **REC_KEY and the centre knob pressed**, then reconnecting USB and releasing both after about a second. They pull GPIO0 and GPIO46 low at reset. See the [Espressif boot-mode requirements](https://docs.espressif.com/projects/esptool/en/latest/esp32s3/advanced-topics/boot-mode-selection.html).
+
+With ESP-IDF's **esptool 4.13.0** active, substitute the actual serial port below:
+
+```sh
+python -m esptool --chip esp32s3 --port /dev/ttyACM0 --no-stub --after no_reset load_ram build/coloplay_lcd_probe.bin
+python -m serial.tools.miniterm /dev/ttyACM0 115200 --dtr 0 --rts 0
+```
+
+`--no-stub` loads through ROM directly; `--after no_reset` avoids resetting away the RAM application. This binary is not a flash-installable image: do not use `write_flash` or `idf.py flash` with it.
+
+In the terminal, press Enter for help, then run:
+
+```text
+pins
+info
+probe
+probe 3
+```
+
+`reset` optionally pulses the LCD reset pin before another probe. Close miniterm with Ctrl+] without toggling reset lines. Power-cycle normally, with REC_KEY and the knob released, to return to the factory application.
+
+## Interpret the capture
+
+- A response that follows the weak bias (all `00` with pull-down and `FF` with pull-up) usually indicates an undriven line. This is inconclusive.
+- Repeated response bits that remain stable under both biases and differ from the CS-inactive control are stronger evidence of panel output. Dummy clocks can shift the meaningful bits; trailing unused bits may still follow the bias.
+- A returned ID can be generic or shared between controllers. Confirm it against the matching datasheet or factory initialization sequence before selecting a driver.
+- If reads remain inconclusive, inspect the panel flex marking or capture the factory firmware's SPI initialization with a logic analyzer before replacing it.
+
+Reference: [Espressif SPI LCD interface modes](https://docs.espressif.com/projects/esp-iot-solution/en/latest/display/lcd/spi_lcd.html), [common LCD command definitions](https://github.com/espressif/esp-idf/blob/v5.5.6/components/esp_lcd/include/esp_lcd_panel_commands.h).
+
+## Validation
+
+Built locally with ESP-IDF `v5.5.6-dirty` (an existing SDK checkout) and Xtensa GCC 14.2.0, with warnings treated as errors for the probe source. `esptool image_info` validated the 131,344-byte image and its internal RAM segments, including RTC RAM; there are no flash-mapped segments. An eight-case host GPIO simulation checked command/response bits in modes 0 and 3, data-line release before panel output, and inactive-CS captures with both biases. This checks software behavior only. No device was available for a hardware trial, and no controller has been identified.
