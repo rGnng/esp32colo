@@ -1,10 +1,61 @@
-# ColoPLAY hardware demo 0.2.0
+# ColoPLAY hardware demo 0.2.4
 
 This is the peripheral bring-up stage before feature development. The starting
 device at `http://127.0.0.1:10081/api/status` reported `0.1.3-nvs`, 16 MiB flash,
-no enabled PSRAM, working WiFi and three released buttons. The new firmware
-builds successfully and passes host OTA tests. It has **not yet been confirmed
-on the physical unit**; the first update must run from its LAN.
+no enabled PSRAM, working WiFi and three released buttons. The initial
+`0.2.0-demo` upload reached recovery mode after two hardware-startup panics.
+`0.2.4-factory-led` is now installed through HTTP OTA, with its running-image
+MD5 verified. The user confirmed the display, speaker, ring and four key LEDs
+work. Key presses and knob movement were also observed in telemetry. The panel
+sends approximately 60–66 Hz TE pulses and the UI renders near 20 fps; the
+256 KiB PSRAM pattern test passes. ES8311 ID `0x8311` / revision 1 responds at
+I2C `0x18` with microphone samples and no reported I/O errors. The supply ADC
+reads approximately 5.0–5.2 V on USB and the light ADC returns changing values
+without errors. Internal OPEN / REC switch presses and charging transitions
+were not separately exercised during this session.
+
+## Display startup fix
+
+TFT_eSPI 2.5.43's default S3 path defines `SPI_PORT` as Arduino's `FSPI`, whose
+value is **0** in Arduino 2.0.17. ESP-IDF's `REG_SPI_BASE` expects **2** for GPSPI2
+and returns zero for index 0, so `SPI_USER_REG(SPI_PORT)` becomes address `0x10`.
+The library writes that address during `init()`. The observed panic reset and
+two failed starts are consistent with this fault.
+
+`USE_FSPI_PORT=1` selects the library branch that uses register index 2 while
+retaining Arduino's FSPI bus object. The firmware now checks both the index
+and actual `SPI_USER_REG` address with compile-time assertions. GPIO assignments
+and the GC9A01 controller remain the same. The updated device has passed hardware
+initialization and reports live panel scan pulses. Related upstream report:
+[TFT_eSPI S3 initialization panic](https://github.com/Bodmer/TFT_eSPI/issues/3332).
+
+The failed-start budget is now scoped to the running image MD5: a new image
+automatically gets a fresh attempt, while repeated crashes of the same image
+still enter recovery. Startup stages are retained in RTC memory across warm
+resets and exposed as `hardware.stage` / `hardware.last_boot_stage`, so a later
+failure can be located without relying only on serial logs.
+
+## LED and speaker corrections
+
+The LED transmitter is reconstructed from the [factory binary](firmware-led-evidence.md):
+SPI3 at 3.2 MHz, GRB, fourteen software slots, four SPI bits per LED bit, and a
+480-byte transfer including reset padding. The original nine-pixel / parallel
+branch assumption was incorrect. Generic NeoPixel timing has been replaced by
+the factory `1000` / `1100` symbols. The user confirmed all lights work after
+this replacement. Adafruit NeoPixel remains a dependency for its color / gamma
+helpers; its RMT transmitter is not used.
+
+Gamma correction now applies to full-scale colors before brightness scaling;
+the previous order made low brightness values quantize near zero. The default
+is 40/255, adjustable from 0 to 64. “Test all LEDs” sends white for five seconds;
+API `led_test` values 2/3/4 similarly select red/green/blue.
+
+Speaker percentage now controls linear amplitude with a 0 dB ceiling. ES8311
+DAC register `0x32` has a -95.5 dB baseline and 0.5 dB steps, so `0xBF` is 0 dB;
+the [Linux ES8311 driver](https://github.com/torvalds/linux/blob/master/sound/soc/codecs/es8311.c)
+records the same scale. Default volume 75% maps to -2.5 dB; 100% reaches 0 dB,
+and 0% mutes. This avoids the legacy driver's raw 0–255 register-percentage
+mapping, which made modest UI settings too quiet and allowed positive gain.
 
 ## Pull, build and upload
 
@@ -71,8 +122,8 @@ can replace this unit's required factory bootloader.
 ## What the demo does
 
 The screen cycles through four pages every ten seconds: animated orbit, input
-states, microphone waveform / level, and sensor readings. The LED branches run
-a dim rainbow; pressing a key lights its pixel white. A brief, low-level test
+states, microphone waveform / level, and sensor readings. The LEDs run
+a rainbow; pressing a key lights its pixel white. A brief, low-level test
 tone plays after hardware initialization.
 
 | Control | Action |
@@ -95,22 +146,24 @@ or a readback of the physical panel.
 |---|---|
 | LCD | GC9A01, 240×240, SPI mode 0 at 40 MHz; frame count / FPS, screenshot, TE pulses on GPIO17 |
 | Backlight | GPIO18, non-inverted LEDC channel 0, 5 kHz / 10 bits |
-| RGB LEDs | GPIO48, GRB at 800 kHz, nine addresses for parallel four- and nine-pixel chains |
+| RGB LEDs | GPIO48, factory SPI3 encoding at 3.2 MHz / 800 kbit/s logical rate, fourteen-slot frame; ring and key LEDs confirmed |
 | Buttons | Seven active-low inputs, 25 ms debounce, state and press counter per key |
 | Encoder | Dual-channel PCNT quadrature, hardware glitch filter, edge / detent counts |
 | Audio | ES8311 ID registers must read `0x8311`; I2C 42/41, full duplex I2S at 16 kHz with MCLK 40, BCLK 39, LRCK 47, TX 21, RX 38 |
-| Microphone | Analog input with GPIO8 bias enabled, waveform, DC-removed RMS / peak and dBFS |
-| Speaker | Short enveloped sine tone; GPIO2 high is the initial amplifier-enable setting |
+| Microphone | ES8311 analog input / ADCV bias network, waveform, DC-removed RMS / peak and dBFS |
+| Speaker | Short enveloped sine tone; audible output confirmed with GPIO2 high |
+| LED power | GPIO8 high enables VCCL; the schematic net is called MICBIAS, but it also biases the light sensor |
 | Supply | ADC1_CH6 / GPIO7, averaged calibrated samples ×3 for the 2M/1M divider; approximate VDD, not isolated battery voltage |
 | Light | ADC2_CH5 / GPIO16, raw / calibrated value, successful-read and error counts |
 | Charge | GPIO3 logic level; low is reported explicitly without assuming battery presence |
 | PSRAM | Enabled Octal PSRAM; 256 KiB allocation tested with two address-dependent patterns |
 
 LCD SPI runs at 40 MHz initially; the factory binary configured 80 MHz.
-The GRB LED protocol, amplifier enable polarity, microphone response, screen
-orientation / colors, physical buttons and encoder direction still need live
-confirmation. TE activity is panel scan feedback, not proof of correct pixels
-or backlight. A successful I2S transfer is not proof of audible output.
+The panel, speaker and all visible LEDs have been confirmed by the user.
+Exact key-to-LED spatial order, color calibration and encoder direction remain
+available for refinement. TE activity alone is panel scan feedback; the separate
+user report confirms visible pixels. I2S transfers alone are not proof of sound;
+audible output was checked separately.
 ADC2 can contend with WiFi: failed light reads retain the last good value and
 publish an error instead of silently reporting zero. No battery state of charge
 or lux calibration is claimed.
@@ -120,7 +173,8 @@ or lux calibration is claimed.
 ```bash
 curl http://127.0.0.1:10081/api/status
 curl -X POST -d 'page=2&auto=0&tone=660&duration=300' http://127.0.0.1:10081/api/demo
-curl -X POST -d 'brightness=65&leds=20&volume=65' http://127.0.0.1:10081/api/demo
+curl -X POST -d 'brightness=65&leds=40&volume=75' http://127.0.0.1:10081/api/demo
+curl -X POST -d 'led_test=1&leds=48' http://127.0.0.1:10081/api/demo
 curl -o screen.bmp http://127.0.0.1:10081/api/screenshot.bmp
 ```
 
@@ -144,7 +198,10 @@ empty / truncated / aborted files, a disconnected-client timeout, invalid
 digest headers, multiple files, finalization failure,
 recovery and seven chunk sizes down to one byte. Python tests check checksum /
 SHA integrity, escaped credentials, actual multipart payload / authentication /
-MD5 and post-reboot verification. They do not replace tests on ESP32 hardware.
+MD5 and post-reboot verification. Additional checks cover codec gain bounds,
+brightness scaling and every channel value against the factory LED lookup table,
+including GRB order, the last slot and reset padding. The suite has 25 host cases;
+the hardware observations above were collected separately on the running unit.
 
 ## Recovery
 
@@ -154,9 +211,10 @@ WiFi and both OTA methods. Holding REC / GPIO0 through reset is a ROM boot-strap
 operation and is not the web recovery method.
 
 If hardware initialization or the first 30 seconds of the demo fails on two
-consecutive boots, the next boot automatically skips the peripherals. After a
-corrected upload, clear the guard through authenticated `POST /api/hardware/retry`
-to restart the demo. The counter is cleared after 30 seconds of successful
+consecutive boots of the same image, the next boot automatically skips the
+peripherals. A corrected upload gets a fresh retry budget automatically.
+Authenticated `POST /api/hardware/retry` can also clear the guard and restart
+the same image. The counter is cleared after 30 seconds of successful
 operation. Recovery still depends on the application reaching startup; it cannot
 fix an invalid image or a failure before `setup()`.
 

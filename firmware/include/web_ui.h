@@ -23,9 +23,9 @@ input[type=range]{vertical-align:middle;padding:0;width:160px}input[type=passwor
 <button data-page="0">Orbit</button><button data-page="1">Inputs</button><button data-page="2">Audio</button><button data-page="3">Sensors</button>
 </div><label><input id="tour" type="checkbox" checked> Automatic tour</label>
 <label>Screen <input id="brightness" type="range" min="0" max="100" value="65"> <output id="brightness-value">65%</output></label>
-<label>LEDs <input id="leds" type="range" min="0" max="64" value="20"> <output id="leds-value">20 / 64</output></label>
-<label>Speaker <input id="volume" type="range" min="0" max="85" value="65"> <output id="volume-value">65%</output></label>
-<div class="row"><button id="beep">Play test tone</button><button id="wake">Screen on / off</button></div>
+<label>LEDs <input id="leds" type="range" min="0" max="64" value="40"> <output id="leds-value">40 / 64</output></label>
+<label>Speaker <input id="volume" type="range" min="0" max="100" value="75"> <output id="volume-value">75%</output></label>
+<div class="row"><button id="beep">Play test tone</button><button id="led-test">Test all LEDs</button><button id="wake">Screen on / off</button></div>
 <p>Keys 1–4 select a page. Turn the knob to adjust screen brightness, or speaker volume on the Audio page. Press the knob to toggle the tour. REC plays a short tone; OPEN toggles the screen and LEDs.</p>
 </div></section>
 <section><h2>Device checks</h2><div id="checks">Waiting for telemetry…</div><p id="message" role="status"></p>
@@ -42,12 +42,13 @@ document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{$('tour').che
 $('tour').onchange=()=>command({auto:$('tour').checked?1:0});
 for(const key of ['brightness','leds','volume']){$(key).oninput=()=>$(key+'-value').textContent=$(key).value+(key==='leds'?' / 64':'%');$(key).onchange=()=>command({[key]:$(key).value})}
 $('beep').onclick=()=>command({tone:660,duration:300});$('wake').onclick=()=>command({awake:state?.hardware?.awake?0:1});
+$('led-test').onclick=()=>command({led_test:1,leds:48});
 $('wifi').onsubmit=async e=>{e.preventDefault();try{const r=await fetch('/api/wifi',{method:'POST',body:new URLSearchParams(new FormData(e.target))});if(!r.ok)throw Error('Save failed');$('message').textContent='Saved; restarting…'}catch(err){$('message').textContent=err.message}};
 async function poll(){if(polling)return;polling=true;try{const r=await fetch('/api/status',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);state=await r.json();const h=state.hardware,a=h.audio;
 $('connection').textContent=state.firmware+' · '+state.wifi.ip+' · '+state.wifi.rssi+' dBm · up '+Math.floor(state.uptime_ms/1000)+' s';
 const lines=[state.recovery_mode?'Recovery mode: hardware stopped; HTTP OTA remains available.':h.ready?'Hardware demo running':'Starting hardware…',
 'Display: '+h.display.fps+' fps; panel TE: '+h.display.te_hz+' Hz',
-'PSRAM: '+(state.psram_bytes/1048576)+' MB; pattern test: '+(h.psram.test_passed?'pass':'unverified'),
+'PSRAM: '+(state.psram_bytes/1048576).toFixed(1)+' MiB; pattern test: '+(h.psram.test_passed?'pass':'unverified'),
 'Audio: '+(a.codec_ready?'ES8311 detected':'not ready')+'; microphone '+a.mic_dbfs+' dBFS; I/O errors '+a.io_errors,
 'Supply: ~'+(h.sensors.vdd_mv_approx/1000).toFixed(2)+' V; light: '+h.sensors.light_raw+(h.sensors.light_error?' (last read failed)':''),
 'Encoder position: '+h.encoder.position+'; buttons: '+state.buttons.filter(b=>b.pressed).map(b=>b.name).join(', ')];

@@ -18,7 +18,7 @@
 namespace {
 
 constexpr const char *kHostname = "coloplay";
-constexpr const char *kFirmwareVersion = "0.2.0-demo";
+constexpr const char *kFirmwareVersion = "0.2.4-factory-led";
 constexpr const char *kPrefsNamespace = "wifi";
 constexpr uint32_t kWifiRetryMs = 10000;
 
@@ -326,6 +326,7 @@ void setupOta() {
 }  // namespace
 
 void setup() {
+  HardwareDemo::captureBootStage();
   Serial.begin(115200);
   const uint32_t serialWaitStart = millis();
   while (!Serial && millis() - serialWaitStart < 3000) {
@@ -344,7 +345,17 @@ void setup() {
     pinMode(button.pin, button.pullup ? INPUT_PULLUP : INPUT);
   }
   gDemoPrefsOpen = demoPrefs.begin("demo", false);
-  if (gDemoPrefsOpen) gBootAttempts = demoPrefs.getUChar("attempts", 0);
+  if (gDemoPrefsOpen) {
+    gBootAttempts = demoPrefs.getUChar("attempts", 0);
+    // An updated image gets its own retry budget. Keep the guard across
+    // resets of the same image, including resets after a peripheral panic.
+    const String image = ESP.getSketchMD5();
+    if (image != demoPrefs.getString("image", "") &&
+        demoPrefs.putString("image", image) > 0) {
+      gBootAttempts = 0;
+      demoPrefs.putUChar("attempts", 0);
+    }
+  }
   // Two failed starts leave the web server and OTA available on the third
   // boot. Holding KEY1 during reset also skips peripheral setup. KEY1 is
   // not a boot strap; REC (GPIO0) is reserved for ROM download mode.

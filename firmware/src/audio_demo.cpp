@@ -1,5 +1,6 @@
 #include "audio_demo.h"
 #include "board_pins.h"
+#include "demo_levels.h"
 
 #include <cmath>
 #include <driver/i2c.h>
@@ -23,6 +24,14 @@ unsigned gFrequency = 660;
 esp_err_t readRegister(uint8_t address, uint8_t reg, uint8_t &value) {
   return i2c_master_write_read_device(kI2c, address, &reg, 1, &value, 1,
                                       pdMS_TO_TICKS(100));
+}
+
+esp_err_t configureVolume(int percent) {
+  const uint8_t data[] = {0x32, DemoLevels::codecVolume(percent)};
+  esp_err_t result = i2c_master_write_to_device(kI2c, gState.address, data,
+                                               sizeof(data), pdMS_TO_TICKS(100));
+  if (result == ESP_OK) result = es8311_voice_mute(gCodec, percent == 0);
+  return result;
 }
 
 void run(void *) {
@@ -120,8 +129,6 @@ void fail(const char *step, esp_err_t error) {
 void begin() {
   pinMode(Board::kAmpEnable, OUTPUT);
   digitalWrite(Board::kAmpEnable, LOW);
-  pinMode(Board::kMicBias, OUTPUT);
-  digitalWrite(Board::kMicBias, HIGH);
 
   i2c_config_t bus = {};
   bus.mode = I2C_MODE_MASTER;
@@ -194,10 +201,10 @@ void begin() {
   result = es8311_init(gCodec, &clocks, ES8311_RESOLUTION_16, ES8311_RESOLUTION_16);
   if (result == ESP_OK) result = es8311_microphone_config(gCodec, false);
   if (result == ESP_OK) result = es8311_microphone_gain_set(gCodec, ES8311_MIC_GAIN_24DB);
-  if (result == ESP_OK) result = es8311_voice_volume_set(gCodec, gState.volume, nullptr);
-  if (result == ESP_OK) result = es8311_voice_mute(gCodec, false);
+  if (result == ESP_OK) result = configureVolume(gState.volume);
   if (result != ESP_OK) return fail("codec configuration", result);
   gState.codec = true;
+  gState.dacVolumeRegister = DemoLevels::codecVolume(gState.volume);
   const BaseType_t created = xTaskCreatePinnedToCore(run, "audio-demo", 6144,
                                                    nullptr, 2, nullptr, 1);
   gState.task = created == pdPASS;
@@ -225,11 +232,11 @@ void beep(unsigned frequency, unsigned durationMs) {
 }
 
 void setVolume(int percent) {
-  const int value = constrain(percent, 0, 85);
-  if (gCodec && gState.codec &&
-      es8311_voice_volume_set(gCodec, value, nullptr) == ESP_OK) {
+  const int value = constrain(percent, 0, 100);
+  if (gCodec && gState.codec && configureVolume(value) == ESP_OK) {
     portENTER_CRITICAL(&gMux);
     gState.volume = value;
+    gState.dacVolumeRegister = DemoLevels::codecVolume(value);
     portEXIT_CRITICAL(&gMux);
   }
 }
@@ -253,6 +260,8 @@ String statusJson() {
   json += ",\"i2s_ready\":" + String(s.i2s ? "true" : "false");
   json += ",\"task_ready\":" + String(s.task ? "true" : "false");
   json += ",\"sample_rate\":16000,\"volume\":" + String(s.volume);
+  json += ",\"dac_volume_register\":" + String(s.dacVolumeRegister);
+  json += ",\"dac_gain_db\":" + String((int(s.dacVolumeRegister) - 191) * 0.5f, 1);
   json += ",\"error\":" + String(s.error);
   json += ",\"rx_frames\":" + String(s.rxFrames);
   json += ",\"tx_frames\":" + String(s.txFrames);

@@ -1,6 +1,8 @@
 #include "hardware_demo.h"
 #include "audio_demo.h"
 #include "board_pins.h"
+#include "demo_levels.h"
+#include "led_strip.h"
 
 #include <Adafruit_NeoPixel.h>
 #include <TFT_eSPI.h>
@@ -10,6 +12,14 @@
 #include <esp_adc_cal.h>
 #include <esp_heap_caps.h>
 #include <cmath>
+#include <esp_attr.h>
+
+// Arduino numbers FSPI as 0; the IDF register macros number GPSPI2 as 2.
+// TFT_eSPI's USE_FSPI_PORT branch bridges the two. Fail the build if a
+// dependency/config change brings back the null register address.
+static_assert(SPI_PORT == 2, "TFT_eSPI must use the S3 GPSPI2 register index");
+static_assert(SPI_USER_REG(SPI_PORT) == DR_REG_SPI2_BASE + 0x10,
+              "TFT_eSPI SPI register base does not match the selected S3 bus");
 
 namespace HardwareDemo {
 namespace {
@@ -19,7 +29,6 @@ constexpr uint16_t kMint = 0x4FF4, kViolet = 0xA37F, kAmber = 0xFD87;
 constexpr const char *kPages[] = {"ORBIT", "INPUTS", "AUDIO", "SENSORS"};
 TFT_eSPI gTft;
 TFT_eSprite gCanvas(&gTft);
-Adafruit_NeoPixel gPixels(Board::kPixelCount, Board::kRgb, NEO_GRB + NEO_KHZ800);
 struct Key {
   const char *name;
   int pin;
@@ -35,7 +44,9 @@ Key gKeys[] = {{"KEY1", Board::kKey1, true}, {"KEY2", Board::kKey2, true},
                {"REC_KEY", Board::kRecoveryButton, true}};
 bool gReady = false, gPaused = false, gDisplay = false, gEncoder = false;
 bool gAwake = true, gAuto = true, gPsramTest = false, gBacklight = false;
-int gPage = 0, gBrightness = 65, gLedBrightness = 20;
+int gPage = 0, gBrightness = 65, gLedBrightness = 40;
+int gLedTest = 0;
+uint32_t gLedTestUntil = 0;
 int32_t gEncoderEdges = 0, gKnobPosition = 0;
 int16_t gLastEncoder = 0;
 uint32_t gLastPage = 0, gLastFrame = 0, gFrames = 0, gLastSensors = 0;
@@ -47,6 +58,24 @@ int gSupplyRaw = 0, gLightRaw = -1;
 uint32_t gSupplyMv = 0, gLightMv = 0, gLightReadings = 0, gLightErrors = 0;
 esp_err_t gLightError = ESP_OK;
 esp_adc_cal_characteristics_t gSupplyCal = {}, gLightCal = {};
+enum Stage : uint32_t {
+  kNotStarted, kPsram, kEncoder, kSensors, kLeds, kBacklight,
+  kLcdInit, kFramebuffer, kLcdTe, kAudio, kFirstFrame, kRunning, kLedPower, kStageCount
+};
+const char *const kStageNames[] = {"not-started", "psram-test", "encoder",
+  "sensors", "leds", "backlight", "lcd-init", "framebuffer", "lcd-te",
+  "audio", "first-frame", "running", "led-power"};
+constexpr uint32_t kStageMagic = 0xC010D1A6;
+RTC_NOINIT_ATTR uint32_t gRetainedMagic;
+RTC_NOINIT_ATTR uint32_t gRetainedStage;
+Stage gStage = kNotStarted, gLastBootStage = kNotStarted;
+
+void setStage(Stage stage) {
+  gStage = stage;
+  gRetainedStage = stage;
+  gRetainedMagic = kStageMagic;
+  Serial.printf("[hardware] stage=%s\n", kStageNames[stage]);
+}
 
 void IRAM_ATTR onTe() { ++gTePulses; }
 
@@ -234,7 +263,7 @@ void drawSensors() {
   text(digitalRead(Board::kCharge) == LOW ? "Charge pin LOW" : "Charge pin HIGH",
        120, 146, kMuted);
   text("WiFi " + String(WiFi.RSSI()) + " dBm", 120, 168, TFT_WHITE);
-  text("RAM " + String(ESP.getPsramSize() / 1024 / 1024) + " MB / " +
+  text("RAM " + String(ESP.getPsramSize() / 1048576.0f, 1) + " MiB / " +
        (gPsramTest ? "PASS" : "unverified"), 120, 190, gPsramTest ? kMint : kAmber);
 }
 
@@ -262,15 +291,19 @@ void render(uint32_t now) {
 
 void animateLeds(uint32_t now) {
   const int brightness = gAwake ? gLedBrightness : 0;
+  if (gLedTest && static_cast<int32_t>(now - gLedTestUntil) >= 0) gLedTest = 0;
+  constexpr uint32_t kTestColors[] = {0, 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF};
   for (int i = 0; i < Board::kPixelCount; ++i) {
     const uint16_t hue = now * 12 + i * 65536 / Board::kPixelCount;
-    uint32_t color = gPixels.gamma32(gPixels.ColorHSV(hue, 220, brightness));
-    if (i < 4 && gKeys[i].pressed && gAwake) {
-      color = gPixels.Color(brightness, brightness, brightness);
-    }
-    gPixels.setPixelColor(i, color);
+    uint32_t color = gLedTest ? kTestColors[gLedTest]
+                             : Adafruit_NeoPixel::gamma32(Adafruit_NeoPixel::ColorHSV(hue, 220, 255));
+    if (!gLedTest && i >= Board::kKeyPixelStart &&
+        i < Board::kKeyPixelStart + Board::kKeyPixels &&
+        gKeys[i - Board::kKeyPixelStart].pressed) color = 0xFFFFFF;
+    if (!gLedTest && i >= Board::kKeyPixelStart + Board::kKeyPixels) color = 0;
+    LedStrip::setPixel(i, DemoLevels::scaleRgb(color, brightness));
   }
-  gPixels.show();
+  LedStrip::show();
   ++gLedFrames;
 }
 
@@ -292,6 +325,13 @@ bool argument(WebServer &server, const char *name, int low, int high,
 }
 }  // namespace
 
+void captureBootStage() {
+  if (esp_reset_reason() != ESP_RST_POWERON && gRetainedMagic == kStageMagic &&
+      gRetainedStage < kStageCount) {
+    gLastBootStage = static_cast<Stage>(gRetainedStage);
+  }
+}
+
 void begin() {
   Serial.println("[hardware] initialise ColoPLAY V1 peripherals");
   for (Key &key : gKeys) {
@@ -299,10 +339,17 @@ void begin() {
     key.raw = key.pressed = digitalRead(key.pin) == LOW;
   }
   pinMode(Board::kCharge, INPUT_PULLUP);
+  setStage(kLedPower);
+  pinMode(Board::kLedPowerEnable, OUTPUT);
+  digitalWrite(Board::kLedPowerEnable, HIGH);
+  delay(2); // let the Q7/Q6-switched VCCL rail settle before LED traffic
+  setStage(kPsram);
   checkPsram();
   Serial.printf("[psram] bytes=%u checked=%u passed=%d\n",
                 ESP.getPsramSize(), gPsramTestBytes, gPsramTest);
+  setStage(kEncoder);
   setupEncoder();
+  setStage(kSensors);
   adc1_config_width(ADC_WIDTH_BIT_12);
   adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_DB_12);
   adc2_config_channel_atten(ADC2_CHANNEL_5, ADC_ATTEN_DB_12);
@@ -310,21 +357,24 @@ void begin() {
   esp_adc_cal_characterize(ADC_UNIT_2, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, 1100, &gLightCal);
   readSensors();
 
-  gPixels.begin();
-  gPixels.clear();
-  gPixels.show();
+  setStage(kLeds);
+  LedStrip::begin();
   // LEDC channel 0 / timer 0 matches the factory backlight configuration.
+  setStage(kBacklight);
   gBacklight = ledcSetup(0, 5000, 10) > 0;
   ledcAttachPin(Board::kBacklight, 0);
   ledcWrite(0, 0);
+  setStage(kLcdInit);
   gTft.init();
   gTft.setRotation(0);
   gTft.fillScreen(kBackground);
+  setStage(kFramebuffer);
   gCanvas.setColorDepth(16);
   gCanvas.setAttribute(PSRAM_ENABLE, true);
   gDisplay = gCanvas.createSprite(240, 240) != nullptr;
   // GC9A01 TE output provides physical panel scan feedback on GPIO17.
   // This does not establish that the pixels or backlight look correct.
+  setStage(kLcdTe);
   pinMode(Board::kLcdTe, INPUT);
   attachInterrupt(digitalPinToInterrupt(Board::kLcdTe), onTe, RISING);
   gTft.startWrite();
@@ -332,10 +382,13 @@ void begin() {
   gTft.writedata(0);
   gTft.endWrite();
   setBacklight();
+  setStage(kAudio);
   AudioDemo::begin();
   gReady = true;
   gLastPage = gLastMetrics = millis();
+  setStage(kFirstFrame);
   render(millis());
+  setStage(kRunning);
   AudioDemo::beep(660, 220);
   Serial.println("[hardware] demo ready; keys 1..4 select pages, knob adjusts light / volume");
 }
@@ -381,6 +434,8 @@ String statusJson() {
   String json;
   json.reserve(1500);
   json += "{\"ready\":" + String(gReady ? "true" : "false");
+  json += ",\"stage\":\"" + String(kStageNames[gStage]) + "\"";
+  json += ",\"last_boot_stage\":\"" + String(kStageNames[gLastBootStage]) + "\"";
   json += ",\"page\":" + String(gPage) + ",\"page_name\":\"" + kPages[gPage] + "\"";
   json += ",\"auto\":" + String(gAuto ? "true" : "false");
   json += ",\"awake\":" + String(gAwake ? "true" : "false");
@@ -394,8 +449,13 @@ String statusJson() {
   json += ",\"edges\":" + String(gEncoderEdges) + ",\"position\":" + String(gKnobPosition);
   json += ",\"a\":" + String(digitalRead(Board::kEncoderA));
   json += ",\"b\":" + String(digitalRead(Board::kEncoderB)) + "}";
-  json += ",\"leds\":{\"pin\":48,\"parallel_lengths\":[4,9],\"protocol\":\"GRB800\"";
-  json += ",\"brightness\":" + String(gLedBrightness) + ",\"frames\":" + String(gLedFrames) + "}";
+  json += ",\"leds\":{\"pin\":48,\"frame_pixels\":14,\"ring_pixels\":9,\"key_pixels\":4";
+  json += ",\"key_start\":9,\"power_pin\":8,\"protocol\":\"factory-SPI3-GRB\",\"spi_hz\":3200000";
+  json += ",\"ready\":" + String(LedStrip::ready() ? "true" : "false");
+  json += ",\"transfers\":" + String(LedStrip::transfers());
+  json += ",\"error\":" + String(LedStrip::error()) + ",\"errors\":" + String(LedStrip::errors());
+  json += ",\"brightness\":" + String(gLedBrightness) + ",\"test_mode\":" + String(gLedTest);
+  json += ",\"frames\":" + String(gLedFrames) + "}";
   json += ",\"sensors\":{\"vdd_raw\":" + String(gSupplyRaw);
   json += ",\"vdd_mv_approx\":" + String(gSupplyMv);
   json += ",\"light_raw\":" + String(gLightRaw) + ",\"light_mv\":" + String(gLightMv);
@@ -412,13 +472,14 @@ String statusJson() {
 bool configure(WebServer &server, String &error) {
   if (!gReady) { error = "hardware not started (or recovery mode)"; return false; }
   int page = gPage, automatic = gAuto, light = gBrightness;
-  int leds = gLedBrightness, volume = AudioDemo::snapshot().volume;
+  int leds = gLedBrightness, volume = AudioDemo::snapshot().volume, ledTest = 0;
   int tone = 0, duration = 250, awake = gAwake;
   if (!argument(server, "page", 0, 3, page, error) ||
       !argument(server, "auto", 0, 1, automatic, error) ||
       !argument(server, "brightness", 0, 100, light, error) ||
       !argument(server, "leds", 0, 64, leds, error) ||
-      !argument(server, "volume", 0, 85, volume, error) ||
+      !argument(server, "volume", 0, 100, volume, error) ||
+      !argument(server, "led_test", 0, 4, ledTest, error) ||
       !argument(server, "tone", 100, 4000, tone, error) ||
       !argument(server, "duration", 30, 1500, duration, error) ||
       !argument(server, "awake", 0, 1, awake, error)) return false;
@@ -426,6 +487,10 @@ bool configure(WebServer &server, String &error) {
   selectPage(page, automatic);
   gBrightness = light;
   gLedBrightness = leds;
+  if (server.hasArg("led_test")) {
+    gLedTest = ledTest;
+    gLedTestUntil = millis() + 5000;
+  }
   gAwake = awake;
   setBacklight();
   if (server.hasArg("volume")) AudioDemo::setVolume(volume);

@@ -11,4 +11,8 @@ done
 for chunk in 1 7 35 36 37 128 1436; do
   "$TEST_BIN" success "$chunk"
 done
+"${CXX:-c++}" -std=c++11 -Wall -Wextra -Werror -Ifirmware/include tests/demo_levels_test.cpp -o "$TEST_BIN"
+"$TEST_BIN"
+"${CXX:-c++}" -std=c++11 -Wall -Wextra -Werror -Ifirmware/include tests/factory_led_frame_test.cpp -o "$TEST_BIN"
+"$TEST_BIN"
 python3 -m unittest discover -s tests -p 'test_ota_upload.py' -v

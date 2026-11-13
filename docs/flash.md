@@ -1,8 +1,12 @@
 # ColoPLAY 刷机流程
 
-`firmware/` 当前构建 **`0.2.0-demo` 硬件演示固件**：屏幕、RGB 灯、按键、旋钮、
+`firmware/` 当前构建 **`0.2.4-factory-led` 硬件演示固件**：屏幕、RGB 灯、按键、旋钮、
 ES8311 音频、ADC / 充电状态和 PSRAM 检查，并增加带密码的 HTTP OTA。
-本地构建和主机 OTA 测试通过，真机外围设备仍需首次升级后验证。
+本地构建和主机 OTA 测试通过，已通过 HTTP OTA 部署并核验运行镜像 MD5。
+该版修复 `0.2.0-demo` 的 TFT_eSPI / S3 SPI 寄存器索引崩溃；真机硬件初始化完成，
+有屏幕 TE 脉冲、帧缓冲图像、PSRAM 测试和 ES8311 麦克风数据。LED 驱动已从原厂
+固件恢复为 SPI3 3.2 MHz、GRB、14 槽帧。用户已确认画面、声音、环灯和四键灯正常；
+四键及旋钮事件也已观测到。见 [LED 二进制拆解](firmware-led-evidence.md)。
 完整命令、控制和恢复方法见 [硬件演示指南](hardware-demo.md)。
 
 ```bash
@@ -232,7 +236,7 @@ Loaded app from partition at offset 0x20000
 
 ## 7. 已知限制
 
-- `0.1.3-nvs` 不驱动屏幕、音频、灯和旋钮；`0.2.0-demo` 增加这些驱动，真机验证待完成。
+- `0.1.3-nvs` 不驱动屏幕、音频、灯和旋钮；当前演示版已确认画面、声音、环灯与四键灯正常。
 - `0.1.3-nvs` 的 `psram_bytes` 为 0；演示版启用 `BOARD_HAS_PSRAM` 并增加内存模式测试。
 - 原厂 bootloader 的 SHA-256 头部差异已被离线定位；本机记录为继续启动且 OTA 可用。
   当前流程保留这份已能工作的 bootloader，没有尝试修改其头部或替换它。
@@ -240,7 +244,7 @@ Loaded app from partition at offset 0x20000
   `firmware/include/secrets.h` 已在 `.gitignore` 中，不会提交。
 - 如果希望固件完全不包含 WiFi 密码，可以清空 `WIFI_SSID` / `WIFI_PASSWORD`，
   首次启动后用串口 `wifi <ssid> <password>` 配网。
-- 如果后续固件需要显示，使用 GC9A01 + 已确认的 SPI 引脚：
-  CLK 14、MOSI 13、CS 12、DC/RS 11、RST 45、BLK 18。TE 17 是原理图连接，
-  本次尚未确认其实际使用；原厂显示 SPI 配置为 80 MHz、mode 0、MISO=-1。
+- 显示使用 GC9A01 + 已确认的 SPI 引脚：
+  CLK 14、MOSI 13、CS 12、DC/RS 11、RST 45、BLK 18。演示版已在 GPIO17 观测到 TE 脉冲；
+  原厂 TE 使用情况未单独恢复。原厂显示 SPI 配置为 80 MHz、mode 0、MISO=-1。
   缺少独立 MISO 不等于已证明不能在 SDA/MOSI 上半双工读回。

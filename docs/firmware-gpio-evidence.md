@@ -1,6 +1,6 @@
 # GPIO evidence from the factory firmware
 
-Offline analysis of the uploaded factory backup on 2026-11-13. The original dump was preserved byte for byte; no firmware was loaded onto a device during this analysis.
+Analysis of the uploaded factory backup on 2026-11-13. The original dump was preserved byte for byte. The initial GPIO pass was offline; the subsequent [LED transmitter teardown](firmware-led-evidence.md) was followed by custom-firmware OTA and confirmation on the device.
 
 ## Image and method
 
@@ -28,7 +28,7 @@ The following addresses apply only to this exact image. **Code/data addresses be
 
 The initialization table begins with `EF`, `EB 14`, `FE`, `EF`, `EB 14`, `84 40`. This is executable driver/configuration evidence, beyond the presence of a controller-name string. It identifies the selected factory driver; it does not distinguish every GC9A01/GC9A01A panel variant or prove that a generic replacement initialization table will work unchanged.
 
-The backlight structure's full-dump offset is `0xe762c`. GPIO17 (`LCD_TE`) is connected in the schematic, but its use was not established in the recovered display configuration. Keep it documented as a schematic connection rather than a firmware-confirmed synchronization feature.
+The backlight structure's full-dump offset is `0xe762c`. GPIO17 (`LCD_TE`) use was not established in the recovered factory display configuration. Separately, the custom driver now enables TE output and observes roughly 60–66 Hz pulses on GPIO17; this is a live-device result rather than a recovered factory setting.
 
 The factory driver does not configure a separate MISO pin. This does **not** establish that the panel is physically unable to return data on its shared SDA/MOSI line. Panel interface straps and controller readback support still determine that. The RAM probe remains an optional experiment; identifying the controller family no longer depends on it.
 
@@ -86,16 +86,27 @@ At `0x4201b0f8–0x4201b11f`, the I2C configuration places SDA=42 and SCL=41 int
 
 GPIO8 is explicitly driven low/high at `0x42026bf1–0x42026c14`, corroborating control of the `MICBIAS` net. Those writes alone do not establish the intended on/off semantics of every audio mode. The amplifier control polarity on GPIO2 was not established in this pass.
 
-## Connections supported by the drawings, with firmware use unresolved
+## LED transmitter: recovered native path
 
-The existing schematic mapping remains the source for GPIO2 (`AUD_CTRL`), GPIO3 (`CHRG`), GPIO7 (`VOL_ADC`), GPIO16 (`LIGHTADC`), GPIO17 (`LCD_TE`), GPIO19/20 (USB), GPIO43/44 (UART0), and GPIO48 (`RGB_LED`). This analysis did not independently recover every one of their runtime configurations.
+The factory's embedded Lua calls `qt.init(48)` at `0x3c26988f` and creates
+`qt.new(14)` at `0x3c267c14`. The `qt:write()` binding at `0x3c264228` points to
+`0x4201e434`, which calls the encoder at `0x4201e33c`. Its initialized SPI
+configuration selects GPIO48, SPI3, 3.2 MHz and mode 0. The encoder emits GRB
+data with four SPI bits per LED bit: zero=`1000`, one=`1100`, in a 480-byte
+transfer with fourteen-slot capacity and reset padding. Full addresses,
+byte values, reproduction script and device results are in the
+[LED evidence](firmware-led-evidence.md).
+
+## Other connections and limits
+
+The existing schematic mapping remains the source for GPIO2 (`AUD_CTRL`), GPIO3 (`CHRG`), GPIO7 (`VOL_ADC`), GPIO16 (`LIGHTADC`), GPIO17 (`LCD_TE`), GPIO19/20 (USB), and GPIO43/44 (UART0). This factory-code pass did not independently recover every one of their runtime configurations. Custom-firmware observations are recorded in the demo guide.
 
 Additional corrections to the GPIO guide:
 
 - ESP32-S3 has no GPIO22–25. GPIO26–32 serve internal memory; GPIO33–37 are also occupied with Octal PSRAM on this module family. These are not spare, unused board GPIOs.
 - `VOL_ADC` is connected to **VDD through a 2 MΩ / 1 MΩ divider**, nominally VDD/3. The drawing supports supply-voltage sensing, not a volume potentiometer or board-version selector. It is not an isolated battery-voltage measurement under all power conditions.
 - The power-board drawing shows no external 10 kΩ pull-up on `OPEN_KEY`. Factory input initialization requests an internal pull-up; the knob push switch separately has an external 10 kΩ pull-up.
-- `RGB_LED` splits through R35 and R36 into the 9-LED and 4-LED branches in the main-board drawing. It is not a documented single 13-LED serial chain. The exact LED protocol and visible mapping still need hardware verification.
+- The earlier parallel-LED-branch claim was incorrect. The factory software sends a fourteen-slot frame through GPIO48; reproducing that SPI format lights the ring and all four key LEDs on the unit. Physical package count is not inferred solely from the software capacity.
 
 ## Local evidence and references
 

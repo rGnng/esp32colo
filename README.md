@@ -16,7 +16,7 @@ The identified unit matches the published ColoPLAY V1 design:
 | Display | 240×240 round LCD; factory firmware selects the GC9A01 driver |
 | Audio | ES8311 codec, CS8120 speaker amplifier, microphone |
 | Controls | Four main keys, rotary encoder with push switch, OPEN and REC keys |
-| Lighting | GPIO48 drives parallel branches of four and nine RGB LEDs |
+| Lighting | Ring and four key LEDs; factory SPI3 encoder sends fourteen RGB slots on GPIO48 |
 | Boards | Main board, screen/encoder adapter and USB-C/power board |
 
 A full factory backup was captured before writes. Offline analysis recovered
@@ -25,12 +25,16 @@ LCD, encoder, button-scan, I2C and I2S configuration from that image; see the
 come from the schematics and are not all independently measured on the unit.
 
 The earlier `0.1.3-nvs` WiFi/ArduinoOTA firmware is recorded as flashed and
-OTA-verified in both application slots. The current source is `0.2.0-demo`, which
+OTA-verified in both application slots. The current source is `0.2.4-factory-led`, which
 adds display pages, buttons/encoder, RGB animation, audio/microphone telemetry,
 sensor readings, a PSRAM check, browser controls and authenticated HTTP OTA.
-Implementation in the source does not establish that every peripheral works on
-the physical device. LED protocol/mapping, panel appearance, audio behavior and
-sensor calibration still need hardware verification.
+The firmware has been deployed through HTTP OTA and verified by its running-image
+MD5. The user confirmed the display, speaker, LED ring and four key LEDs work;
+the four keys and knob also produce input events. PSRAM passes its pattern test,
+the microphone streams without I/O errors, and supply/light readings update.
+The LED transmitter was reconstructed from the original firmware: SPI3 at
+3.2 MHz, fourteen RGB slots, GRB order and factory pulse timing. See the
+[LED teardown](docs/firmware-led-evidence.md) and [demo guide](docs/hardware-demo.md).
 
 ## Internal pinout
 
@@ -50,12 +54,12 @@ names, boot straps and the factory button-scan order.
 | Encoder push | 46 | `EKEY`; active low, external pull-up, boot strap |
 | OPEN key | 15 | Power-board S2; active low |
 | REC / download key | 0 | Power-board S1; active low, boot strap |
-| RGB LED data | 48 | Parallel 4-LED and 9-LED branches, not one 13-LED chain |
+| RGB LED data | 48 | Factory `qt.init(48)`, fourteen-slot SPI3 frame; ring and key lights work |
 | ES8311 I2C SDA / SCL | 42 / 41 | Codec control |
 | I2S MCLK / BCLK / LRCK | 40 / 39 / 47 | Audio clocks |
 | I2S ESP32 → codec | 21 | `AUD_SDOUT` → ES8311 DSDIN |
 | I2S codec → ESP32 | 38 | `AUD_SDIN` ← ES8311 ASDOUT |
-| Amplifier control / microphone bias | 2 / 8 | `AUD_CTRL` / `MICBIAS`; control polarity needs verification |
+| Amplifier control / LED supply enable | 2 / 8 | `AUD_CTRL` / schematic net `MICBIAS`; GPIO8 switches VCCL and biases the light sensor |
 | Supply-voltage ADC | 7 | `VOL_ADC`: VDD divided by approximately 3, not a volume knob |
 | Ambient-light ADC | 16 | `LIGHTADC`; ADC2 reads can contend with WiFi |
 | Charge status | 3 | `CHRG`; also a boot strap |
@@ -187,7 +191,7 @@ After a normal boot, inspect USB serial at 115200 baud and open
 curl http://coloplay.local/api/status
 ```
 
-The current source reports version `0.2.0-demo`, `running_partition`,
+The current source reports version `0.2.4-factory-led`, `running_partition`,
 `sketch_md5`, WiFi status and hardware telemetry. Peripheral startup waits five
 seconds after the web server starts. Holding **KEY1 (GPIO6)** during a normal
 reset skips the demo and leaves WiFi/web/OTA available; two failed peripheral
@@ -230,6 +234,8 @@ this does not establish that other checksum failures are harmless.
 
 - [GPIO map](docs/gpio-map.md) — complete module-pad/net mapping and unresolved hardware details.
 - [Factory GPIO evidence](docs/firmware-gpio-evidence.md) — recovered values, code/data addresses and image identity.
+- [Factory LED teardown](docs/firmware-led-evidence.md) — original Lua/native write path, SPI configuration, encoding and reproduction script.
+- [Hardware demo guide](docs/hardware-demo.md) — controls, HTTP OTA, test results and recovery.
 - [Factory firmware](docs/factory-firmware.md) — backup integrity, complete partition table and restore commands.
 - [Detailed flash notes](docs/flash.md) — earlier `0.1.3-nvs` bring-up and OTA verification records.
 - [Firmware source](firmware/) — current PlatformIO hardware demo and web/OTA implementation.
