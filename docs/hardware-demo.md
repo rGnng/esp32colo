@@ -1,18 +1,33 @@
-# ColoPLAY hardware demo 0.2.4
+# ColoPLAY hardware demo 0.2.5
 
 This is the peripheral bring-up stage before feature development. The starting
 device at `http://127.0.0.1:10081/api/status` reported `0.1.3-nvs`, 16 MiB flash,
 no enabled PSRAM, working WiFi and three released buttons. The initial
 `0.2.0-demo` upload reached recovery mode after two hardware-startup panics.
-`0.2.4-factory-led` is now installed through HTTP OTA, with its running-image
-MD5 verified. The user confirmed the display, speaker, ring and four key LEDs
-work. Key presses and knob movement were also observed in telemetry. The panel
+`0.2.5-rotary` is now installed through HTTP OTA, with its running-image
+MD5 verified. With `0.2.4-factory-led`, the user confirmed the display, speaker,
+ring and four key LEDs work. Key presses and knob movement were also observed
+in telemetry. The panel
 sends approximately 60–66 Hz TE pulses and the UI renders near 20 fps; the
 256 KiB PSRAM pattern test passes. ES8311 ID `0x8311` / revision 1 responds at
 I2C `0x18` with microphone samples and no reported I/O errors. The supply ADC
 reads approximately 5.0–5.2 V on USB and the light ADC returns changing values
 without errors. Internal OPEN / REC switch presses and charging transitions
 were not separately exercised during this session.
+
+## Rotary notch correction
+
+The user reported one UI increment for every two physical notches. The PCNT
+configuration counts all four edges of a quadrature cycle, while this encoder
+has two notches per cycle. `0.2.5-rotary` consumes two edges per notch instead
+of four. A signed remainder preserves incomplete movement; a single reverse
+edge or contact bounce does not undo a completed step. Direction and per-step
+brightness / volume changes are unchanged.
+
+`hardware.encoder.edges_per_detent` reports `2` alongside raw `edges` and the
+decoded `position`. Host checks cover both directions, partial turns, reversals,
+bounce and multiple detents batched between polls. The build and HTTP OTA image
+verification pass; physical notch-by-notch behavior still needs user confirmation.
 
 ## Display startup fix
 
@@ -148,7 +163,7 @@ or a readback of the physical panel.
 | Backlight | GPIO18, non-inverted LEDC channel 0, 5 kHz / 10 bits |
 | RGB LEDs | GPIO48, factory SPI3 encoding at 3.2 MHz / 800 kbit/s logical rate, fourteen-slot frame; ring and key LEDs confirmed |
 | Buttons | Seven active-low inputs, 25 ms debounce, state and press counter per key |
-| Encoder | Dual-channel PCNT quadrature, hardware glitch filter, edge / detent counts |
+| Encoder | Dual-channel PCNT quadrature, hardware glitch filter, two edges per notch, edge / detent counts |
 | Audio | ES8311 ID registers must read `0x8311`; I2C 42/41, full duplex I2S at 16 kHz with MCLK 40, BCLK 39, LRCK 47, TX 21, RX 38 |
 | Microphone | ES8311 analog input / ADCV bias network, waveform, DC-removed RMS / peak and dBFS |
 | Speaker | Short enveloped sine tone; audible output confirmed with GPIO2 high |

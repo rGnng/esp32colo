@@ -3,6 +3,7 @@
 #include "board_pins.h"
 #include "demo_levels.h"
 #include "led_strip.h"
+#include "rotary_detents.h"
 
 #include <Adafruit_NeoPixel.h>
 #include <TFT_eSPI.h>
@@ -49,6 +50,7 @@ int gLedTest = 0;
 uint32_t gLedTestUntil = 0;
 int32_t gEncoderEdges = 0, gKnobPosition = 0;
 int16_t gLastEncoder = 0;
+RotaryDetents gDetents;
 uint32_t gLastPage = 0, gLastFrame = 0, gFrames = 0, gLastSensors = 0;
 uint32_t gLastMetrics = 0, gPreviousFrames = 0, gPreviousTe = 0;
 uint32_t gLastLeds = 0, gLedFrames = 0, gPsramTestBytes = 0;
@@ -179,7 +181,8 @@ void pollInputs(uint32_t now) {
   if (!gEncoder) return;
   int16_t value = 0;
   if (pcnt_get_counter_value(PCNT_UNIT_0, &value) != ESP_OK) return;
-  gEncoderEdges += value - gLastEncoder;
+  const int32_t edges = value - gLastEncoder;
+  gEncoderEdges += edges;
   gLastEncoder = value;
   if (abs(value) > 20000) {
     pcnt_counter_pause(PCNT_UNIT_0);
@@ -187,10 +190,9 @@ void pollInputs(uint32_t now) {
     gLastEncoder = 0;
     pcnt_counter_resume(PCNT_UNIT_0);
   }
-  const int32_t position = gEncoderEdges / 4;
-  const int32_t delta = position - gKnobPosition;
+  const int32_t delta = gDetents.consume(edges);
   if (!delta) return;
-  gKnobPosition = position;
+  gKnobPosition += delta;
   if (gPage == 2) {
     AudioDemo::setVolume(AudioDemo::snapshot().volume + delta * 2);
   } else {
@@ -447,6 +449,7 @@ String statusJson() {
   json += ",\"brightness\":" + String(gBrightness) + ",\"spi_hz\":40000000}";
   json += ",\"encoder\":{\"ready\":" + String(gEncoder ? "true" : "false");
   json += ",\"edges\":" + String(gEncoderEdges) + ",\"position\":" + String(gKnobPosition);
+  json += ",\"edges_per_detent\":" + String(RotaryDetents::kEdgesPerDetent);
   json += ",\"a\":" + String(digitalRead(Board::kEncoderA));
   json += ",\"b\":" + String(digitalRead(Board::kEncoderB)) + "}";
   json += ",\"leds\":{\"pin\":48,\"frame_pixels\":14,\"ring_pixels\":9,\"key_pixels\":4";

@@ -15,4 +15,6 @@ done
 "$TEST_BIN"
 "${CXX:-c++}" -std=c++11 -Wall -Wextra -Werror -Ifirmware/include tests/factory_led_frame_test.cpp -o "$TEST_BIN"
 "$TEST_BIN"
+"${CXX:-c++}" -std=c++11 -Wall -Wextra -Werror -Ifirmware/include tests/rotary_detents_test.cpp -o "$TEST_BIN"
+"$TEST_BIN"
 python3 -m unittest discover -s tests -p 'test_ota_upload.py' -v

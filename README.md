@@ -25,7 +25,7 @@ LCD, encoder, button-scan, I2C and I2S configuration from that image; see the
 come from the schematics and are not all independently measured on the unit.
 
 The earlier `0.1.3-nvs` WiFi/ArduinoOTA firmware is recorded as flashed and
-OTA-verified in both application slots. The current source is `0.2.4-factory-led`, which
+OTA-verified in both application slots. The current source is `0.2.5-rotary`, which
 adds display pages, buttons/encoder, RGB animation, audio/microphone telemetry,
 sensor readings, a PSRAM check, browser controls and authenticated HTTP OTA.
 The firmware has been deployed through HTTP OTA and verified by its running-image
@@ -35,6 +35,9 @@ the microphone streams without I/O errors, and supply/light readings update.
 The LED transmitter was reconstructed from the original firmware: SPI3 at
 3.2 MHz, fourteen RGB slots, GRB order and factory pulse timing. See the
 [LED teardown](docs/firmware-led-evidence.md) and [demo guide](docs/hardware-demo.md).
+The rotary decoder now consumes two quadrature edges per mechanical notch;
+the former four-edge divisor caused one UI step per two notches. Partial
+reverse movement is retained until a full notch is completed.
 
 ## Internal pinout
 
@@ -191,7 +194,7 @@ After a normal boot, inspect USB serial at 115200 baud and open
 curl http://coloplay.local/api/status
 ```
 
-The current source reports version `0.2.4-factory-led`, `running_partition`,
+The current source reports version `0.2.5-rotary`, `running_partition`,
 `sketch_md5`, WiFi status and hardware telemetry. Peripheral startup waits five
 seconds after the web server starts. Holding **KEY1 (GPIO6)** during a normal
 reset skips the demo and leaves WiFi/web/OTA available; two failed peripheral
