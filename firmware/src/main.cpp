@@ -1,3 +1,4 @@
+#include "device_log.h"
 // ColoPLAY V1 hardware demo. Keep the factory bootloader / partition tables.
 
 #include <Arduino.h>
@@ -14,13 +15,20 @@
 #include "hardware_demo.h"
 #include "http_ota.h"
 #include "clock_service.h"
+#include "scene_service.h"
 #include "usb_network.h"
+#include "usb_experiment.h"
 #include "web_ui.h"
+#include "web_assets.h"
 
 namespace {
 
 constexpr const char *kHostname = "coloplay";
-constexpr const char *kFirmwareVersion = "0.3.1-clock-usb";
+#ifdef COLOPLAY_USB_CONCURRENCY_TEST
+constexpr const char *kFirmwareVersion = "0.4.1-usb-concurrency-test";
+#else
+constexpr const char *kFirmwareVersion = "0.4.6-readable-ui";
+#endif
 constexpr const char *kPrefsNamespace = "wifi";
 constexpr uint32_t kWifiRetryMs = 10000;
 
@@ -87,13 +95,13 @@ void loadWifiCredentials() {
     if (gPrefsOpen) {
       bool saved = wifiPrefs.putString("ssid", gSsid) > 0;
       saved = (wifiPrefs.putString("pass", gPassword) > 0) && saved;
-      Serial.println(saved ? "[wifi] seeded NVS credentials from secrets.h"
+      DeviceLog::println(saved ? "[wifi] seeded NVS credentials from secrets.h"
                            : "[wifi] failed to seed NVS; using secrets.h");
     } else {
-      Serial.println("[wifi] NVS open failed; using secrets.h without saving");
+      DeviceLog::println("[wifi] NVS open failed; using secrets.h without saving");
     }
   } else {
-    Serial.printf("[wifi] loaded credentials from NVS (ssid=%s)\n", gSsid.c_str());
+    DeviceLog::printf("[wifi] loaded credentials from NVS (ssid=%s)\n", gSsid.c_str());
   }
 }
 
@@ -117,18 +125,18 @@ void connectWifi() {
     return;
   }
 
-  Serial.printf("[wifi] connecting to \"%s\"...\n", gSsid.c_str());
+  DeviceLog::printf("[wifi] connecting to \"%s\"...\n", gSsid.c_str());
   WiFi.disconnect();
   WiFi.begin(gSsid.c_str(), gPassword.c_str());
 }
 
 void logWifiResult() {
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("[wifi] connected: ip=%s rssi=%d dBm mac=%s\n",
+    DeviceLog::printf("[wifi] connected: ip=%s rssi=%d dBm mac=%s\n",
                   WiFi.localIP().toString().c_str(), WiFi.RSSI(),
                   WiFi.macAddress().c_str());
   } else {
-    Serial.printf("[wifi] not connected (status=%d), retrying\n", WiFi.status());
+    DeviceLog::printf("[wifi] not connected (status=%d), retrying\n", WiFi.status());
   }
 }
 
@@ -180,6 +188,7 @@ String statusJson() {
   json += "\"buttons\":" + buttonStateJson() + ",";
   json += "\"clock\":" + ClockService::statusJson() + ",";
   json += "\"usb\":" + UsbNetwork::statusJson() + ",";
+  json += "\"scene\":" + SceneService::statusJson() + ",";
   json += "\"hardware\":" + HardwareDemo::statusJson();
   json += "}";
   return json;
@@ -196,7 +205,7 @@ void handleSerialCommand(const String &line) {
     if (gPrefsOpen) {
       wifiPrefs.clear();
     }
-    Serial.println("[wifi] cleared NVS wifi namespace; rebooting");
+    DeviceLog::println("[wifi] cleared NVS wifi namespace; rebooting");
     delay(200);
     ESP.restart();
     return;
@@ -212,15 +221,15 @@ void handleSerialCommand(const String &line) {
       password = gPassword;
     }
     if (saveWifiCredentials(ssid, password)) {
-      Serial.printf("[wifi] saved %s to NVS; rebooting\n", ssid.c_str());
+      DeviceLog::printf("[wifi] saved %s to NVS; rebooting\n", ssid.c_str());
       delay(200);
       ESP.restart();
     } else {
-      Serial.println("[wifi] save failed");
+      DeviceLog::println("[wifi] save failed");
     }
     return;
   }
-  Serial.println("[serial] commands: status | wifi <ssid> <password> | wifi-reset");
+  DeviceLog::println("[serial] commands: status | wifi <ssid> <password> | wifi-reset");
 }
 
 void pollSerial() {
@@ -238,6 +247,14 @@ void pollSerial() {
 }
 
 void setupHttp() {
+  DeviceLog::setup(server);
+  for (const auto &asset:kWebAssets) {
+    server.on(asset.path, HTTP_GET, [asset] {
+      server.sendHeader("Content-Encoding", "gzip");
+      server.sendHeader("Cache-Control", "public, max-age=31536000, immutable");
+      server.send_P(200, asset.type, reinterpret_cast<const char *>(asset.data), asset.length);
+    });
+  }
   server.on("/", HTTP_GET, [] { server.send_P(200, "text/html; charset=utf-8", kDemoPage); });
   server.on("/api/status", HTTP_GET, [] {
     server.send(200, "application/json", statusJson());
@@ -251,6 +268,7 @@ void setupHttp() {
       server.send(400, "application/json", "{\"error\":\"" + jsonEscape(error) + "\"}");
       return;
     }
+    DeviceLog::println("[web] clock settings saved");
     server.send(200, "application/json", ClockService::statusJson(true));
   });
   server.on("/api/clock/sync", HTTP_POST, [] {
@@ -274,6 +292,26 @@ void setupHttp() {
     String json = "{\"ssid\":\"" + jsonEscape(gSsid) + "\",\"source\":\"nvs\"}";
     server.send(200, "application/json", json);
   });
+  server.on("/api/scenes", HTTP_GET, [] {
+    server.send(200, "application/json", SceneService::configJson());
+  });
+  server.on("/api/scenes", HTTP_POST, [] {
+    String error;
+    if ((server.arg("op")=="run"&&!HardwareDemo::ready()) || !SceneService::configure(server,error)) {
+      if (error.isEmpty()) error="hardware not ready";
+      server.send(400,"application/json","{\"error\":\""+jsonEscape(error)+"\"}"); return;
+    }
+    DeviceLog::printf("[web] scene operation %s, scene %s\n",server.arg("op").c_str(),server.arg("scene_id").c_str());
+    server.send(200,"application/json",SceneService::configJson());
+  });
+  server.on("/api/lighting", HTTP_POST, [] {
+    String error;
+    if (!HardwareDemo::configure(server,error)) {
+      server.send(400,"application/json","{\"error\":\""+jsonEscape(error)+"\"}"); return;
+    }
+    DeviceLog::println("[web] lighting settings applied");
+    server.send(200,"application/json",HardwareDemo::statusJson());
+  });
   server.on("/api/demo", HTTP_POST, [] {
     String error;
     if (!HardwareDemo::configure(server, error)) {
@@ -282,7 +320,6 @@ void setupHttp() {
     }
     server.send(200, "application/json", HardwareDemo::statusJson());
   });
-  server.on("/api/screenshot.bmp", HTTP_GET, [] { HardwareDemo::sendScreenshot(server); });
   server.on("/api/hardware/retry", HTTP_POST, [] {
     if (!server.authenticate("admin", OTA_PASSWORD)) {
       server.requestAuthentication(BASIC_AUTH, "ColoPLAY OTA");
@@ -312,7 +349,7 @@ void setupHttp() {
       server.send(500, "application/json", "{\"error\":\"could not save to NVS\"}");
       return;
     }
-    Serial.printf("[wifi] saved credentials to NVS (ssid=%s), rebooting\n", ssid.c_str());
+    DeviceLog::printf("[wifi] saved credentials to NVS (ssid=%s), rebooting\n", ssid.c_str());
     server.send(200, "application/json", "{\"saved\":true,\"rebooting\":true}");
     delay(300);
     ESP.restart();
@@ -326,8 +363,11 @@ void setupHttp() {
     server.send(404, "text/plain", "not found\n");
   });
   HttpOta::setup(server, OTA_PASSWORD);
+#ifdef COLOPLAY_USB_CONCURRENCY_TEST
+  UsbNetwork::experimentSetup(server);
+#endif
   server.begin();
-  Serial.println("[http] server listening on port 80");
+  DeviceLog::println("[http] server listening on port 80");
 }
 
 void setupOta() {
@@ -338,21 +378,21 @@ void setupOta() {
     gArduinoOtaBusy = true;
     HardwareDemo::pause(true);
     const String type = ArduinoOTA.getCommand() == U_FLASH ? "firmware" : "filesystem";
-    Serial.printf("[ota] update started (%s)\n", type.c_str());
+    DeviceLog::printf("[ota] update started (%s)\n", type.c_str());
   });
-  ArduinoOTA.onEnd([] { Serial.println("\n[ota] update finished"); });
+  ArduinoOTA.onEnd([] { DeviceLog::println("\n[ota] update finished"); });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
     Serial.printf("[ota] %u%%\r", total ? (progress * 100) / total : 0);
   });
   ArduinoOTA.onError([](ota_error_t error) {
     gArduinoOtaBusy = false;
     HardwareDemo::pause(false);
-    Serial.printf("[ota] error %u\n", static_cast<unsigned>(error));
+    DeviceLog::printf("[ota] error %u\n", static_cast<unsigned>(error));
   });
 
   ArduinoOTA.begin();
   gOtaReady = true;
-  Serial.println("[ota] ArduinoOTA ready");
+  DeviceLog::println("[ota] ArduinoOTA ready");
 }
 
 }  // namespace
@@ -366,10 +406,10 @@ void setup() {
     delay(10);
   }
 
-  Serial.println();
-  Serial.printf("ColoPLAY bring-up firmware %s\n", kFirmwareVersion);
-  Serial.println("[serial] commands: status | wifi <ssid> <password> | wifi-reset");
-  Serial.printf("[chip] %s rev %d, flash %u MB, psram %u MB\n",
+  DeviceLog::println();
+  DeviceLog::printf("ColoPLAY bring-up firmware %s\n", kFirmwareVersion);
+  DeviceLog::println("[serial] commands: status | wifi <ssid> <password> | wifi-reset");
+  DeviceLog::printf("[chip] %s rev %d, flash %u MB, psram %u MB\n",
                 ESP.getChipModel(), ESP.getChipRevision(),
                 ESP.getFlashChipSize() / 1024 / 1024,
                 ESP.getPsramSize() / 1024 / 1024);
@@ -396,6 +436,7 @@ void setup() {
 
   loadWifiCredentials();
   ClockService::begin();
+  SceneService::begin(HardwareDemo::applyAction);
   UsbNetwork::loadSettings();
 
   // The application owns the credentials in the "wifi" NVS namespace.
@@ -416,13 +457,13 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     if (MDNS.begin(kHostname)) {
       MDNS.addService("http", "tcp", 80);
-      Serial.printf("[mdns] http://%s.local/\n", kHostname);
+      DeviceLog::printf("[mdns] http://%s.local/\n", kHostname);
     } else {
-      Serial.println("[mdns] failed to start");
+      DeviceLog::println("[mdns] failed to start");
     }
     setupOta();
   } else {
-    Serial.println("[wifi] initial connection failed; OTA disabled until connected");
+    DeviceLog::println("[wifi] initial connection failed; OTA disabled until connected");
   }
 
   setupHttp();
@@ -441,7 +482,7 @@ void loop() {
     // First successful (re)connection after boot: bring mDNS and OTA up.
     if (MDNS.begin(kHostname)) {
       MDNS.addService("http", "tcp", 80);
-      Serial.printf("[mdns] http://%s.local/\n", kHostname);
+      DeviceLog::printf("[mdns] http://%s.local/\n", kHostname);
     }
     setupOta();
   }
@@ -451,6 +492,9 @@ void loop() {
   }
   server.handleClient();
   HttpOta::tick();
+#ifdef COLOPLAY_USB_CONCURRENCY_TEST
+  UsbNetwork::experimentTick();
+#endif
   ClockService::tick();
   pollSerial();
   if (!gArduinoOtaBusy && !HttpOta::busy()) {

@@ -24,3 +24,9 @@ python3 -m unittest discover -s tests -p 'test_ota_upload.py' -v
 "$TEST_BIN"
 "${CXX:-c++}" -std=c++11 -Wall -Wextra -Werror -Ifirmware/include tests/usb_dhcp_test.cpp -o "$TEST_BIN"
 "$TEST_BIN"
+
+for fixture in scene_settings gesture_engine action_feedback log_buffer; do
+  "${CXX:-c++}" -std=c++11 -Wall -Wextra -Werror -Ifirmware/include "tests/${fixture}_test.cpp" -o "$TEST_BIN"
+  "$TEST_BIN"
+done
+python3 -m unittest discover -s tests -p 'test_usb_*.py' -v

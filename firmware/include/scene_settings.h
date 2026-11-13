@@ -1,0 +1,167 @@
+#pragma once
+#include <cstdint>
+#include <cstring>
+
+namespace SceneSettings {
+constexpr int kSceneCount = 8, kBindingCount = 64, kActionCount = 3, kInputCount = 7;
+enum Input : uint8_t { kKey1, kKey2, kKey3, kKey4, kKnob, kOpen, kRec };
+enum Gesture : uint8_t { kSingle, kDouble, kTriple, kHold, kHoldRelease,
+  kLeft, kRight, kPressLeft, kPressRight, kGestureCount };
+enum Type : uint8_t { kNone, kNextScene, kPreviousScene, kSwitchScene,
+  kScreenChange, kScreenSet, kRingChange, kRingSet, kKeysChange, kKeysSet,
+  kVolumeChange, kVolumeSet, kRainbow, kStatic, kToggleAwake, kSync, kTone, kTypeCount };
+enum Led : uint8_t { kInherit, kProportional, kFeedbackRainbow, kFeedbackStatic, kOff, kLedCount };
+enum Screen : uint8_t { kUnchanged, kClock, kScreenCount };
+constexpr const char *kInputs[] = {"key1","key2","key3","key4","knob","open","rec"};
+constexpr const char *kGestures[] = {"single","double","triple","hold","hold_release","left","right","press_left","press_right"};
+constexpr const char *kTypes[] = {"none","next_scene","previous_scene","switch_scene",
+  "screen_change","screen_set","ring_change","ring_set","keys_change","keys_set",
+  "volume_change","volume_set","rainbow","static","toggle_awake","sync_time","tone"};
+constexpr const char *kLeds[] = {"inherit","proportional","rainbow","static","off"};
+constexpr const char *kScreens[] = {"unchanged","clock"};
+struct Action {
+  uint8_t type = kNone, target = 0, led = kInherit, screen = kUnchanged;
+  int16_t value = 0;
+  uint16_t feedbackMs = 1500;
+  uint32_t color = 0x40FFAA;
+};
+struct Binding {
+  uint8_t scene = 0, input = 0, gesture = 0, count = 0;
+  Action actions[kActionCount];
+};
+enum LightingMode : uint32_t { kGeneralLighting, kSceneRainbow, kSceneStatic, kLightingModeCount };
+constexpr const char *kLightingModes[] = {"general","rainbow","static"};
+struct Light {
+  uint32_t mode, color;
+  constexpr Light(uint32_t modeValue=kGeneralLighting, uint32_t colorValue=0xFFFFFF) : mode(modeValue), color(colorValue) {}
+};
+struct SceneV1 { uint8_t used = 0, screen = kClock; char name[25] = {}; uint8_t reserved = 0; };
+struct StoredV1 {
+  uint32_t version = 1;
+  uint8_t active = 0, reserved[3] = {};
+  SceneV1 scenes[kSceneCount];
+  Binding bindings[kBindingCount];
+};
+struct Scene : SceneV1 { Light ring, keys; };
+struct Stored {
+  uint32_t version = 2;
+  uint8_t active = 0, reserved[3] = {};
+  Scene scenes[kSceneCount];
+  Binding bindings[kBindingCount];
+};
+static_assert(sizeof(Action) == 12 && sizeof(StoredV1) == 2792 && sizeof(Stored) == 2920, "scene storage layout changed");
+inline bool exists(const Stored &s, int id) { return id >= 0 && id < kSceneCount && s.scenes[id].used == 1; }
+inline bool percentType(int type) { return type >= kScreenChange && type <= kVolumeSet; }
+inline bool changeType(int type) { return type == kScreenChange || type == kRingChange || type == kKeysChange || type == kVolumeChange; }
+inline bool validName(const char *name) {
+  const auto *end = static_cast<const char *>(std::memchr(name, 0, 25));
+  if (!end || end == name) return false;
+  bool visible = false;
+  for (const char *p = name; p < end; ++p) {
+    if (static_cast<unsigned char>(*p) < 32 || *p == 127) return false;
+    if (*p != ' ') visible = true;
+  }
+  return visible;
+}
+inline bool validAction(const Stored &s, const Action &a) {
+  if (a.type >= kTypeCount || a.led >= kLedCount || a.screen >= kScreenCount ||
+      a.color > 0xFFFFFF || a.feedbackMs < 250 || a.feedbackMs > 10000) return false;
+  if (a.type == kSwitchScene && !exists(s, a.target)) return false;
+  if (a.led == kProportional && !percentType(a.type)) return false;
+  if (percentType(a.type) && (a.value > 100 || a.value < (changeType(a.type) ? -100 : 0))) return false;
+  if (a.type == kTone && (a.value < 100 || a.value > 4000)) return false;
+  return true;
+}
+inline bool validLight(const Light &light) { return light.mode < kLightingModeCount && light.color <= 0xFFFFFF; }
+// General mode is resolved at render time, so later General changes still apply.
+inline Light resolveLighting(const Light &scene, bool generalStatic, uint32_t generalColor) {
+  return scene.mode == kGeneralLighting ? Light{generalStatic ? kSceneStatic : kSceneRainbow, generalColor} : scene;
+}
+inline bool valid(const Stored &s) {
+  if (s.version != 2 || !exists(s, 0) || !exists(s, s.active) || !validName(s.scenes[0].name) || std::strcmp(s.scenes[0].name, "Default")) return false;
+  for (int i=0;i<kSceneCount;++i) {
+    const auto &scene=s.scenes[i];
+    if (scene.used > 1 || (scene.used && (!validName(scene.name) || scene.screen != kClock || !validLight(scene.ring) || !validLight(scene.keys)))) return false;
+    if (scene.used) for (int j=0;j<i;++j) if (s.scenes[j].used&&!std::strcmp(scene.name,s.scenes[j].name)) return false;
+  }
+  for (int i = 0; i < kBindingCount; ++i) {
+    const auto &b = s.bindings[i];
+    if (!b.count) continue;
+    if (!exists(s, b.scene) || b.input >= kInputCount || b.gesture >= kGestureCount ||
+        (b.input != kKnob && b.gesture >= kLeft) || b.count > kActionCount) return false;
+    for (int j = 0; j < b.count; ++j) if (!validAction(s, b.actions[j])) return false;
+    for (int j = 0; j < i; ++j) {
+      const auto &p = s.bindings[j];
+      if (p.count && p.scene == b.scene && p.input == b.input && p.gesture == b.gesture) return false;
+    }
+  }
+  return true;
+}
+// Validate the complete legacy record before replacing the caller's settings.
+inline bool migrate(const StoredV1 &old, Stored &out) {
+  if (old.version != 1) return false;
+  Stored candidate;
+  candidate.active=old.active;
+  for (int i=0;i<kSceneCount;++i) static_cast<SceneV1 &>(candidate.scenes[i])=old.scenes[i];
+  std::memcpy(candidate.bindings,old.bindings,sizeof(old.bindings));
+  if (!valid(candidate)) return false;
+  out=candidate;
+  return true;
+}
+inline Binding *binding(Stored &s, int scene, int input, int gesture) {
+  for (auto &b : s.bindings) if (b.count && b.scene == scene && b.input == input && b.gesture == gesture) return &b;
+  return nullptr;
+}
+inline bool assign(Stored &s, const Binding &value) {
+  Binding *b = binding(s, value.scene, value.input, value.gesture);
+  if (!b && !value.count) return true;
+  if (!b) for (auto &slot : s.bindings) if (!slot.count) { b = &slot; break; }
+  if (!b) return false;
+  *b = value;
+  return true;
+}
+enum BindingEdit { kBindingSaved, kBindingMissing, kBindingConflict, kBindingFull };
+// Move/replace one row in the candidate before its single NVS commit. New or
+// duplicated rows use createOnly to avoid overwriting an existing gesture.
+inline BindingEdit editBinding(Stored &s, const Binding &value,
+                               int sourceInput=-1, int sourceGesture=-1, bool createOnly=false) {
+  Binding *source=nullptr;
+  if (sourceInput>=0 || sourceGesture>=0) {
+    if (sourceInput<0 || sourceGesture<0) return kBindingMissing;
+    source=binding(s,value.scene,sourceInput,sourceGesture);
+    if (!source) return kBindingMissing;
+  }
+  Binding *destination=binding(s,value.scene,value.input,value.gesture);
+  if (destination && (createOnly || (source && source!=destination && value.count))) return kBindingConflict;
+  if (source && source!=destination) {
+    *source=Binding{};
+    if (!value.count) return kBindingSaved;
+  }
+  return assign(s,value)?kBindingSaved:kBindingFull;
+}
+inline bool remove(Stored &s, int id) {
+  if (!id || !exists(s, id)) return false;
+  s.scenes[id] = Scene{};
+  if (s.active == id) s.active = 0;
+  for (auto &b : s.bindings) {
+    if (b.scene == id) b = Binding{};
+    else for (int i = 0; i < b.count; ++i) if (b.actions[i].type == kSwitchScene && b.actions[i].target == id) b.actions[i].target = 0;
+  }
+  return true;
+}
+inline Stored defaults() {
+  Stored s;
+  s.scenes[0].used = 1;
+  std::strcpy(s.scenes[0].name, "Default");
+  auto add = [&](int input, int gesture, int type, int value, int led = kInherit) {
+    Binding b; b.input = input; b.gesture = gesture; b.count = 1;
+    b.actions[0].type = type; b.actions[0].value = value; b.actions[0].led = led; assign(s, b);
+  };
+  add(kKey1,kSingle,kNextScene,0); add(kKey2,kSingle,kPreviousScene,0);
+  add(kKey4,kHold,kSwitchScene,0); add(kOpen,kSingle,kToggleAwake,0);
+  add(kRec,kSingle,kTone,660);
+  add(kKnob,kLeft,kVolumeChange,-2,kProportional); add(kKnob,kRight,kVolumeChange,2,kProportional);
+  add(kKnob,kPressLeft,kScreenChange,-3); add(kKnob,kPressRight,kScreenChange,3);
+  return s;
+}
+}  // namespace SceneSettings

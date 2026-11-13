@@ -1,5 +1,7 @@
 # GPIO evidence from the factory firmware
 
+Factory-image evidence only; hardware drawings are not used as a source.
+
 Analysis of the uploaded factory backup on 2026-11-13. The original dump was preserved byte for byte. The initial GPIO pass was offline; the subsequent [LED transmitter teardown](firmware-led-evidence.md) was followed by custom-firmware OTA and confirmation on the device.
 
 ## Image and method
@@ -32,7 +34,7 @@ The backlight structure's full-dump offset is `0xe762c`. GPIO17 (`LCD_TE`) use w
 
 The factory driver does not configure a separate MISO pin. This does **not** establish that the panel is physically unable to return data on its shared SDA/MOSI line. Panel interface straps and controller readback support still determine that. The RAM probe remains an optional experiment; identifying the controller family no longer depends on it.
 
-## Buttons: software order differs from schematic naming
+## Buttons: recovered native scan order
 
 The initialized data table at `0x3fca0ad4` (full-dump offset `0x1144e0`) contains six 12-byte entries. Their first 32-bit words are:
 
@@ -42,27 +44,25 @@ The initialized data table at `0x3fca0ad4` (full-dump offset `0x1144e0`) contain
 
 The loop at `0x420264c8–0x4202650f` reads those six entries, builds the GPIO input mask and enables input mode with pull-up requested.
 
-| Table position | GPIO | Schematic signal |
-|---:|---:|---|
-| 0 | 6 | `KEY1` |
-| 1 | 1 | `KEY2` |
-| 2 | 5 | `KEY4` |
-| 3 | 4 | `KEY3` |
-| 4 | 46 | `EKEY`, knob press |
-| 5 | 15 | `OPEN_KEY` |
+| Table position | GPIO |
+|---:|---:|
+| 0 | 6 |
+| 1 | 1 |
+| 2 | 5 |
+| 3 | 4 |
+| 4 | 46 |
+| 5 | 15 |
 
-These are positions in the native scan table, not independently verified Lua `btn()` IDs. In particular, do not rename schematic `KEY3` to GPIO5: **the schematic net is still `KEY3` → GPIO4**. It is the software scan order that swaps the third and fourth key nets.
-
-`REC_KEY` / GPIO0 is absent from this six-entry scan table. Its download-mode connection remains established by the schematics and ESP32-S3 boot requirements.
+These are positions in the native scan table, not independently verified Lua
+`btn()` IDs. GPIO0 is absent from this six-entry factory scan table. Board
+switch positions and connector assignments are not established by these words.
 
 ## Rotary encoder
 
-At `0x42026662–0x42026679`, the PCNT channel configuration contains edge GPIO9 and level GPIO10. At `0x420266a3–0x420266af`, the other channel reverses them. This corroborates:
+At `0x42026662–0x42026679`, the PCNT channel configuration contains edge GPIO9 and level GPIO10. At `0x420266a3–0x420266af`, the other channel reverses them. The recovered assignments are:
 
-- `EAS` / encoder A → GPIO9.
-- `EBS` / encoder B → GPIO10.
-
-The encoder component is **EC1** on the screen adapter; **S1** on that board is the separate knob push switch.
+- encoder channel A → GPIO9.
+- encoder channel B → GPIO10.
 
 ## Audio
 
@@ -82,9 +82,9 @@ Using the ESP-IDF legacy I2S pin-structure layout, those fields are:
 | Data out, ESP32 → codec | 21 |
 | Data in, codec → ESP32 | 38 |
 
-At `0x4201b0f8–0x4201b11f`, the I2C configuration places SDA=42 and SCL=41 into the structure. These agree with the ES8311 schematic. The firmware also includes ES8311 register/codec routines.
+At `0x4201b0f8–0x4201b11f`, the I2C configuration places SDA=42 and SCL=41 into the structure. The firmware also includes ES8311 register/codec routines.
 
-GPIO8 is explicitly driven low/high at `0x42026bf1–0x42026c14`, corroborating control of the `MICBIAS` net. Those writes alone do not establish the intended on/off semantics of every audio mode. The amplifier control polarity on GPIO2 was not established in this pass.
+GPIO8 is explicitly driven low/high at `0x42026bf1–0x42026c14`. Those writes establish a controlled output, but not its board-level role, component connections or active polarity. GPIO2 amplifier control was not established by this factory-code pass.
 
 ## LED transmitter: recovered native path
 
@@ -97,16 +97,19 @@ transfer with fourteen-slot capacity and reset padding. Full addresses,
 byte values, reproduction script and device results are in the
 [LED evidence](firmware-led-evidence.md).
 
-## Other connections and limits
+## Limits of the recovered configuration
 
-The existing schematic mapping remains the source for GPIO2 (`AUD_CTRL`), GPIO3 (`CHRG`), GPIO7 (`VOL_ADC`), GPIO16 (`LIGHTADC`), GPIO17 (`LCD_TE`), GPIO19/20 (USB), and GPIO43/44 (UART0). This factory-code pass did not independently recover every one of their runtime configurations. Custom-firmware observations are recorded in the demo guide.
+Factory configuration or physical roles for GPIO2, GPIO3, GPIO7, GPIO16,
+GPIO17, GPIO19/20 and GPIO43/44 were not independently recovered in this pass.
+No module-pad/connector mapping, resistor network, sensor component identity,
+amplifier identity or physical pull-up arrangement is inferred here.
 
-Additional corrections to the GPIO guide:
-
-- ESP32-S3 has no GPIO22–25. GPIO26–32 serve internal memory; GPIO33–37 are also occupied with Octal PSRAM on this module family. These are not spare, unused board GPIOs.
-- `VOL_ADC` is connected to **VDD through a 2 MΩ / 1 MΩ divider**, nominally VDD/3. The drawing supports supply-voltage sensing, not a volume potentiometer or board-version selector. It is not an isolated battery-voltage measurement under all power conditions.
-- The power-board drawing shows no external 10 kΩ pull-up on `OPEN_KEY`. Factory input initialization requests an internal pull-up; the knob push switch separately has an external 10 kΩ pull-up.
-- The earlier parallel-LED-branch claim was incorrect. The factory software sends a fourteen-slot frame through GPIO48; reproducing that SPI format lights the ring and all four key LEDs on the unit. Physical package count is not inferred solely from the software capacity.
+The factory software's fourteen-slot LED capacity does not establish populated
+package count or physical ring/key order. Reproducing its waveform lights the
+ring and key LEDs in the custom firmware, which is a separate device result.
+See the [development baseline](development.md#verified-baseline-and-open-items)
+for custom-firmware observations, and the [compact factory GPIO map](gpio-map.md)
+for a summary of the recovered assignments.
 
 ## Local evidence and references
 
@@ -120,7 +123,6 @@ xxd -e -g 4 -s 0x54ec4 -l 20 backups/coloplay-factory-20261113-131459.bin
 xxd -e -g 4 -s 0xe762c -l 16 backups/coloplay-factory-20261113-131459.bin
 ```
 
-- [Main-board schematic](coloplay-main.pdf), [screen-adapter schematic](coloplay-screen.pdf), [power-board schematic](coloplay-power.pdf).
 - [ESP32-S3 GPIO restrictions](https://docs.espressif.com/projects/esp-idf/en/v5.5.2/esp32s3/api-reference/peripherals/gpio.html).
 - [LVGL SPI helper argument order](https://github.com/lvgl/lvgl_esp32_drivers/blob/master/lvgl_helpers.c).
 - [LVGL backlight configuration layout](https://github.com/lvgl/lvgl_esp32_drivers/blob/master/lvgl_tft/esp_lcd_backlight.h) and [SPI device configuration](https://github.com/lvgl/lvgl_esp32_drivers/blob/master/lvgl_tft/disp_spi.c). These explain the matching structure/code patterns; the exact vendor source revision is unknown.

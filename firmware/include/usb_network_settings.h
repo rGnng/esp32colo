@@ -7,9 +7,9 @@ namespace UsbNetworkSettings {
 enum Mode : uint8_t { kEthernet = 0, kSerialJtag = 1 };
 struct Stored {
   uint16_t version = 1;
-  uint8_t mode = kEthernet, prefix = 24;
-  uint8_t address[4] = {172, 32, 29, 21};
-  uint8_t lease[4] = {172, 32, 29, 30};
+  uint8_t mode = kEthernet, prefix = 30;
+  uint8_t address[4] = {172, 32, 29, 1};
+  uint8_t lease[4] = {172, 32, 29, 2};
 };
 static_assert(sizeof(Stored) == 12, "USB settings storage layout changed");
 inline uint32_t number(const uint8_t ip[4]) {
@@ -29,6 +29,18 @@ inline bool parse(const char *text, uint8_t ip[4]) {
     else if (*text) return false;
   }
   return true;
+}
+inline bool peer(const uint8_t device[4], uint8_t prefix, uint8_t result[4]) {
+  if (prefix<1||prefix>30) return false;
+  const uint32_t ip=number(device), net=ip&mask(prefix), broadcast=net|~mask(prefix);
+  const uint32_t host=ip==net+1?net+2:net+1;
+  if (ip==net||ip==broadcast||host>=broadcast) return false;
+  for (int i=0;i<4;++i) result[i]=host>>(24-i*8);
+  return true;
+}
+inline bool legacyDefault(const Stored &s) {
+  const uint8_t oldDevice[]={172,32,29,21}, oldHost[]={172,32,29,30};
+  return s.prefix==24&&!std::memcmp(s.address,oldDevice,4)&&!std::memcmp(s.lease,oldHost,4);
 }
 inline bool valid(const Stored &settings) {
   if (settings.version != 1 || settings.mode > kSerialJtag ||

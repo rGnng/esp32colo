@@ -17,7 +17,7 @@ int main() {
   assert(!validServer(std::string(64, 'a').c_str()));
   assert(!validServer(std::string(254, 'a').c_str()));
   Stored damaged;
-  damaged.version = 2;
+  damaged.version = 99;
   assert(!valid(damaged));
   damaged = Stored{};
   std::memset(damaged.ntpServer, 'a', sizeof(damaged.ntpServer));
@@ -25,6 +25,15 @@ int main() {
   damaged = Stored{};
   std::strcpy(damaged.timezone, "unknown");
   assert(!valid(damaged));
+  LegacyStored legacy;
+  std::strcpy(legacy.ntpServer,"10.0.0.5"); std::strcpy(legacy.timezone,"Asia/Shanghai");
+  Stored migrated;
+  assert(migrate(legacy,migrated) && valid(migrated));
+  assert(!std::strcmp(migrated.ntpServer,"10.0.0.5") && !std::strcmp(migrated.timezone,"Asia/Shanghai"));
+  assert(!migrated.ntpServer2[0] && !migrated.ntpServer3[0]);
+  std::strcpy(migrated.ntpServer2,"ntp.lan"); std::strcpy(migrated.ntpServer3,"10.0.0.6"); assert(valid(migrated));
+  std::strcpy(migrated.ntpServer2,"http://bad"); assert(!valid(migrated));
+  std::memset(legacy.ntpServer,'a',sizeof(legacy.ntpServer)); assert(!migrate(legacy,migrated));
   // Verify the embedded POSIX rules, including the half-hour offset and DST.
   for (const auto &zone : kZones) {
     setenv("TZ", zone.posix, 1); tzset();
@@ -32,6 +41,11 @@ int main() {
       tm local;
       localtime_r(&instant, &local);
       assert(mktime(&local) == instant);
+      if (!std::strncmp(zone.id,"UTC",3)) {
+        char offset[8];strftime(offset,sizeof(offset),"%z",&local);
+        std::string expected=std::string(zone.id+3,3)+std::string(zone.id+7,2);
+        assert(expected==offset && local.tm_isdst==0);
+      }
     }
   }
   const time_t winter = 1767225600;  // 2026-01-01 00:00 UTC

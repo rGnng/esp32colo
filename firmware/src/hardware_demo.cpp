@@ -1,3 +1,4 @@
+#include "device_log.h"
 #include "hardware_demo.h"
 #include "audio_demo.h"
 #include "board_pins.h"
@@ -7,6 +8,8 @@
 #include "clock_service.h"
 #include "inter_clock_fonts.h"
 #include "lighting_settings.h"
+#include "scene_service.h"
+#include "gesture_engine.h"
 
 #include <Adafruit_NeoPixel.h>
 #include <TFT_eSPI.h>
@@ -64,6 +67,8 @@ uint32_t gLedTestUntil = 0;
 int32_t gEncoderEdges = 0, gKnobPosition = 0;
 int16_t gLastEncoder = 0;
 RotaryDetents gDetents;
+GestureEngine gGestures;
+uint32_t gSceneEpoch = 0;
 uint32_t gLastPage = 0, gLastFrame = 0, gFrames = 0, gLastSensors = 0;
 uint32_t gLastMetrics = 0, gPreviousFrames = 0, gPreviousTe = 0;
 uint32_t gLastLeds = 0, gLedFrames = 0, gPsramTestBytes = 0;
@@ -89,7 +94,7 @@ void setStage(Stage stage) {
   gStage = stage;
   gRetainedStage = stage;
   gRetainedMagic = kStageMagic;
-  Serial.printf("[hardware] stage=%s\n", kStageNames[stage]);
+  DeviceLog::printf("[hardware] stage=%s\n", kStageNames[stage]);
 }
 
 void IRAM_ATTR onTe() { ++gTePulses; }
@@ -137,7 +142,8 @@ void readSensors() {
   uint32_t sum = 0;
   for (int i = 0; i < 16; ++i) sum += adc1_get_raw(ADC1_CHANNEL_6);
   gSupplyRaw = sum / 16;
-  // R37=2M / R38=1M: this measures the VDD rail, not an isolated battery.
+  // Legacy supply estimate: calibrated ADC x3. The physical divider and
+  // scale are not established by the factory analysis; this is not battery SOC.
   gSupplyMv = esp_adc_cal_raw_to_voltage(gSupplyRaw, &gSupplyCal) * 3;
   int light = 0;
   gLightError = adc2_get_raw(ADC2_CHANNEL_5, ADC_WIDTH_BIT_12, &light);
@@ -203,118 +209,42 @@ void setupEncoder() {
 }
 
 void pollInputs(uint32_t now) {
-  for (size_t i = 0; i < sizeof(gKeys) / sizeof(gKeys[0]); ++i) {
-    Key &key = gKeys[i];
-    const bool pressed = digitalRead(key.pin) == LOW;
-    if (pressed != key.raw) { key.raw = pressed; key.changed = now; }
-    if (now - key.changed < 25 || key.pressed == key.raw) continue;
-    key.pressed = key.raw;
-    if (!key.pressed) continue;
-    ++key.presses;
-    if (i < 4) {
-      selectPage(i == 0 ? kClockPage : i, false);
-      if (i == 2) AudioDemo::beep();
-    } else if (i == 4) {
-      gAuto = !gAuto;
-      gLastPage = now;
-    } else if (i == 5) {
-      gAwake = !gAwake;
-      setBacklight();
-    } else {
-      AudioDemo::beep(880, 180);
+  if (gSceneEpoch != SceneService::epoch()) {
+    gSceneEpoch = SceneService::epoch(); gGestures.cancel();
+    gAwake = true; setBacklight();
+  }
+  int32_t delta = 0;
+  if (gEncoder) {
+    int16_t value = 0;
+    if (pcnt_get_counter_value(PCNT_UNIT_0, &value) == ESP_OK) {
+      const int32_t edges = value - gLastEncoder;
+      gEncoderEdges += edges; gLastEncoder = value;
+      if (abs(value) > 20000) {
+        pcnt_counter_pause(PCNT_UNIT_0); pcnt_counter_clear(PCNT_UNIT_0);
+        gLastEncoder = 0; pcnt_counter_resume(PCNT_UNIT_0);
+      }
+      delta = gDetents.consume(edges); gKnobPosition += delta;
     }
   }
-  if (!gEncoder) return;
-  int16_t value = 0;
-  if (pcnt_get_counter_value(PCNT_UNIT_0, &value) != ESP_OK) return;
-  const int32_t edges = value - gLastEncoder;
-  gEncoderEdges += edges;
-  gLastEncoder = value;
-  if (abs(value) > 20000) {
-    pcnt_counter_pause(PCNT_UNIT_0);
-    pcnt_counter_clear(PCNT_UNIT_0);
-    gLastEncoder = 0;
-    pcnt_counter_resume(PCNT_UNIT_0);
+  bool raw[SceneSettings::kInputCount];
+  for (int i=0;i<SceneSettings::kInputCount;++i) raw[i]=digitalRead(gKeys[i].pin)==LOW;
+  struct Event { int input, gesture, repeat; } events[32];
+  int count=0;
+  gGestures.tick(raw,delta,now,[&](int input,int gesture,int repeat) {
+    if (count<32) events[count++]={input,gesture,repeat};
+  });
+  for (int i=0;i<SceneSettings::kInputCount;++i) {
+    const bool down=gGestures.down(i);
+    if (down&&!gKeys[i].pressed) ++gKeys[i].presses;
+    gKeys[i].pressed=down;
   }
-  const int32_t delta = gDetents.consume(edges);
-  if (!delta) return;
-  gKnobPosition += delta;
-  if (gPage == 2) {
-    AudioDemo::setVolume(AudioDemo::snapshot().volume + delta * 2);
-  } else {
-    gLighting.screen = constrain(int(gLighting.screen) + delta * 3, 0, 100);
-    gLightingDirty = true;
-    gLightingChangedAt = now;
-    updateBrightness();
+  for (int i=0;i<count;++i) {
+    SceneService::event(events[i].input,events[i].gesture,events[i].repeat);
+    if (gSceneEpoch!=SceneService::epoch()) {
+      gSceneEpoch=SceneService::epoch(); gGestures.cancel();
+      gAwake=true; setBacklight(); break;
+    }
   }
-}
-
-void text(const String &value, int x, int y, uint16_t color, int font = 2) {
-  gCanvas.setTextColor(color, kBackground);
-  gCanvas.drawString(value, x, y, font);
-}
-
-void drawOrbit(uint32_t now) {
-  const float t = now * 0.0006f;
-  gCanvas.drawCircle(120, 119, 71, 0x1969);
-  gCanvas.drawCircle(120, 119, 88, 0x1969);
-  for (int i = 0; i < 9; ++i) {
-    const float phase = t + i * kTau / 9;
-    const float radius = 74 + 8 * sinf(t * 1.8f + i);
-    const uint16_t color = i % 2 ? kViolet : kMint;
-    gCanvas.fillCircle(120 + cosf(phase) * radius,
-                       119 + sinf(phase) * radius, 3 + i % 3, color);
-  }
-  text("COLO", 120, 85, TFT_WHITE, 4);
-  text("PLAY", 120, 117, kMint, 4);
-  text("HARDWARE DEMO", 120, 151, kMuted);
-  text(gAuto ? "Live / auto tour" : "Live / manual", 120, 172, kMuted);
-}
-
-void drawInputs() {
-  for (int i = 0; i < 4; ++i) {
-    const int x = 52 + (i % 2) * 136, y = 80 + (i / 2) * 64;
-    const uint16_t color = gKeys[i].pressed ? kMint : 0x3189;
-    gCanvas.fillCircle(x, y, 18, color);
-    text(String(i + 1), x, y - 8, gKeys[i].pressed ? kBackground : TFT_WHITE);
-    text(String(gKeys[i].presses), x, y + 20, kMuted);
-  }
-  text(String(gKnobPosition), 120, 91, kMint, 4);
-  text("KNOB", 120, 120, kMuted);
-  gCanvas.drawCircle(120, 117, 44, gKeys[4].pressed ? kAmber : 0x3189);
-  text("Light " + String(gScreenLevel) + "%", 120, 177, TFT_WHITE);
-  text("Press knob: auto tour", 120, 199, kMuted);
-}
-
-void drawAudio() {
-  const AudioDemo::Snapshot s = AudioDemo::snapshot();
-  text(s.codec ? "MICROPHONE" : "CODEC NOT READY", 120, 64,
-       s.codec ? kMint : kAmber);
-  for (int i = 1; i < 64; ++i) {
-    // Auto-scale for visibility, while the numerical meter stays absolute.
-    const float scale = fmaxf(400, s.peak);
-    gCanvas.drawLine(28 + (i - 1) * 184 / 63,
-                     115 - s.waveform[i - 1] * 24 / scale,
-                     28 + i * 184 / 63, 115 - s.waveform[i] * 24 / scale, kMint);
-  }
-  const int level = constrain(int((s.dbfs + 72) / 72 * 160), 0, 160);
-  gCanvas.fillRoundRect(40, 151, 160, 9, 4, 0x3189);
-  if (level) gCanvas.fillRoundRect(40, 151, level, 9, 4, kMint);
-  text(String(s.dbfs, 1) + " dBFS", 120, 168, TFT_WHITE);
-  text("Volume " + String(s.volume) + "%", 120, 190, kMuted);
-  text("Key 3 / REC: test tone", 120, 210, kMuted);
-}
-
-void drawSensors() {
-  text("SUPPLY RAIL", 120, 66, kMuted);
-  text(String(gSupplyMv / 1000.0f, 2) + " V", 120, 88, kMint, 4);
-  text("Light " + String(gLightRaw) +
-       (gLightError == ESP_OK ? " ADC" : " (retry)"), 120, 124, TFT_WHITE);
-  text(digitalRead(Board::kCharge) == LOW ? "Charge pin LOW" : "Charge pin HIGH",
-       120, 146, kMuted);
-  text("WiFi " + String(WiFi.RSSI()) + " dBm", 120, 168, TFT_WHITE);
-  text("RAM " + String(ESP.getPsramSize() / 1048576.0f, 1) + " MiB / " +
-       (gPsramTest ? "PASS" : "unverified"), 120, 190, gPsramTest ? kMint : kAmber);
 }
 
 void drawClock() {
@@ -329,30 +259,12 @@ void drawClock() {
   gCanvas.unloadFont();
 }
 
-void render(uint32_t now) {
+void render(uint32_t) {
   if (!gDisplay || !gAwake) return;
   gCanvas.fillSprite(kBackground);
-  gCanvas.setTextDatum(TC_DATUM);
-  if (gPage == kClockPage) {
-    drawClock();
-    gCanvas.pushSprite(0, 0);
-    ++gFrames;
-    return;
-  }
-  gCanvas.drawCircle(120, 120, 117, 0x2969);
-  // A slow moving marker makes a stalled render loop immediately visible.
-  const float phase = now * 0.001f;
-  gCanvas.fillCircle(120 + cosf(phase) * 116, 120 + sinf(phase) * 116, 3, kMint);
-  gCanvas.setTextDatum(TC_DATUM);
-  text(kPages[gPage], 120, 24, kMuted);
-  switch (gPage) {
-    case 0: drawOrbit(now); break;
-    case 1: drawInputs(); break;
-    case 2: drawAudio(); break;
-    case 3: drawSensors(); break;
-  }
-  for (int i = 0; i < kPageCount; ++i) {
-    gCanvas.fillCircle(92 + i * 14, 229, 3, i == gPage ? kMint : 0x3189);
+  switch (SceneService::screen()) {
+    case SceneSettings::kClock: drawClock(); break;
+    default: break;
   }
   gCanvas.pushSprite(0, 0);
   ++gFrames;
@@ -360,12 +272,26 @@ void render(uint32_t now) {
 
 void animateLeds(uint32_t now) {
   if (gLedTest && static_cast<int32_t>(now - gLedTestUntil) >= 0) gLedTest = 0;
+  const auto feedback = SceneService::feedback();
+  const auto ring = SceneSettings::resolveLighting(SceneService::lighting(true),gLighting.mode==LightingSettings::kStatic,gLighting.color);
+  const auto keys = SceneSettings::resolveLighting(SceneService::lighting(false),gLighting.mode==LightingSettings::kStatic,gLighting.color);
   constexpr uint32_t kTestColors[] = {0, 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF};
   for (int i = 0; i < Board::kPixelCount; ++i) {
     const uint16_t hue = now * 12 + i * 65536 / Board::kPixelCount;
+    const auto &light=i<Board::kRingPixels?ring:keys;
     uint32_t color = gLedTest ? kTestColors[gLedTest] : Adafruit_NeoPixel::gamma32(
-        gLighting.mode == LightingSettings::kStatic ? gLighting.color
+        light.mode == SceneSettings::kSceneStatic ? light.color
         : Adafruit_NeoPixel::ColorHSV(hue, 220, 255));
+    if (!gLedTest && feedback.active) {
+      using namespace SceneSettings;
+      if (feedback.led==kOff) color=0;
+      else if (feedback.led==kFeedbackStatic) color=Adafruit_NeoPixel::gamma32(feedback.color);
+      else if (feedback.led==kFeedbackRainbow) color=Adafruit_NeoPixel::gamma32(Adafruit_NeoPixel::ColorHSV(hue,220,255));
+      else if (feedback.led==kProportional && i<Board::kRingPixels) {
+        const int coverage=constrain(feedback.percent*Board::kRingPixels-i*100,0,100);
+        color=DemoLevels::scaleRgb(Adafruit_NeoPixel::gamma32(feedback.color),LightingSettings::pwm(coverage));
+      }
+    }
     if (i >= Board::kKeyPixelStart + Board::kKeyPixels) color = 0;
     const int level = !gAwake ? 0 : i < Board::kKeyPixelStart ? gRingLevel : gKeysLevel;
     LedStrip::setPixel(i, DemoLevels::scaleRgb(color, LightingSettings::pwm(level)));
@@ -392,6 +318,32 @@ bool argument(WebServer &server, const char *name, int low, int high,
 }
 }  // namespace
 
+int applyAction(const SceneSettings::Action &a, int repetitions) {
+  using namespace SceneSettings;
+  int result=-1; bool lightingChanged=false;
+  auto level = [&](uint32_t &field, bool change) {
+    field=constrain(change?int(field)+int(a.value)*repetitions:int(a.value),0,100);
+    result=field; lightingChanged=true;
+  };
+  switch (a.type) {
+    case kScreenChange: case kScreenSet: level(gLighting.screen,a.type==kScreenChange); break;
+    case kRingChange: case kRingSet: level(gLighting.ring,a.type==kRingChange); break;
+    case kKeysChange: case kKeysSet: level(gLighting.keys,a.type==kKeysChange); break;
+    case kVolumeChange: case kVolumeSet:
+      AudioDemo::setVolume(a.type==kVolumeChange?AudioDemo::snapshot().volume+a.value*repetitions:a.value);
+      result=AudioDemo::snapshot().volume; break;
+    case kRainbow: gLighting.mode=LightingSettings::kRainbow; lightingChanged=true; break;
+    case kStatic: gLighting.mode=LightingSettings::kStatic; gLighting.color=a.color; lightingChanged=true; break;
+    case kToggleAwake: gAwake=!gAwake; break;
+    case kSync: ClockService::requestSync(); break;
+    case kTone: AudioDemo::beep(a.value,200); break;
+    default: break;
+  }
+  if (lightingChanged) { gLightingDirty=true; gLightingChangedAt=millis(); }
+  updateBrightness();
+  return result;
+}
+
 void captureBootStage() {
   if (esp_reset_reason() != ESP_RST_POWERON && gRetainedMagic == kStageMagic &&
       gRetainedStage < kStageCount) {
@@ -400,20 +352,23 @@ void captureBootStage() {
 }
 
 void begin() {
-  Serial.println("[hardware] initialise ColoPLAY V1 peripherals");
+  DeviceLog::println("[hardware] initialise ColoPLAY V1 peripherals");
   loadLighting();
   for (Key &key : gKeys) {
     pinMode(key.pin, key.pullup ? INPUT_PULLUP : INPUT);
     key.raw = key.pressed = digitalRead(key.pin) == LOW;
   }
+  bool initial[SceneSettings::kInputCount];
+  for (int i=0;i<SceneSettings::kInputCount;++i) initial[i]=gKeys[i].pressed;
+  gGestures.seed(initial,millis()); gSceneEpoch=SceneService::epoch();
   pinMode(Board::kCharge, INPUT_PULLUP);
   setStage(kLedPower);
   pinMode(Board::kLedPowerEnable, OUTPUT);
   digitalWrite(Board::kLedPowerEnable, HIGH);
-  delay(2); // let the Q7/Q6-switched VCCL rail settle before LED traffic
+  delay(2); // retain the working output-settle delay before LED traffic
   setStage(kPsram);
   checkPsram();
-  Serial.printf("[psram] bytes=%u checked=%u passed=%d\n",
+  DeviceLog::printf("[psram] bytes=%u checked=%u passed=%d\n",
                 ESP.getPsramSize(), gPsramTestBytes, gPsramTest);
   setStage(kEncoder);
   setupEncoder();
@@ -457,8 +412,7 @@ void begin() {
   setStage(kFirstFrame);
   render(millis());
   setStage(kRunning);
-  AudioDemo::beep(660, 220);
-  Serial.println("[hardware] demo ready; keys 1..4 select pages, knob adjusts light / volume");
+  DeviceLog::println("[hardware] desktop gadget ready; scene bindings control inputs");
 }
 
 bool ready() { return gReady; }
@@ -473,7 +427,7 @@ void tick() {
     gLightingDirty = !gLightingStored;
     gLightingChangedAt = now;
   }
-  if (gAuto && now - gLastPage >= 10000) selectPage((gPage + 1) % kPageCount, true);
+
   if (now - gLastSensors >= 500) { gLastSensors = now; readSensors(); }
   if (now - gLastLeds >= 33) { gLastLeds = now; animateLeds(now); }
   if (now - gLastFrame >= (gPage == kClockPage ? 200u : 50u)) {
@@ -575,6 +529,7 @@ bool configure(WebServer &server, String &error) {
       !argument(server, "tone", 100, 4000, tone, error) ||
       !argument(server, "duration", 30, 1500, duration, error) ||
       !argument(server, "awake", 0, 1, awake, error)) return false;
+  if (page != kClockPage || automatic) { error = "scene mode currently supports the Clock screen only"; return false; }
   LightingSettings::Stored candidate = gLighting;
   if (server.hasArg("leds")) {
     int legacy = 0;
@@ -639,33 +594,4 @@ bool configure(WebServer &server, String &error) {
   return true;
 }
 
-void sendScreenshot(WebServer &server) {
-  if (!gDisplay) { server.send(503, "text/plain", "framebuffer unavailable\n"); return; }
-  // Standard 24-bit BMP, bottom-up. Stream rows to avoid a second 173 KB
-  // allocation. The image is the render buffer, not a panel readback.
-  uint8_t header[54] = {'B', 'M'};
-  auto put32 = [&](size_t offset, uint32_t value) {
-    for (int i = 0; i < 4; ++i) header[offset + i] = value >> (8 * i);
-  };
-  constexpr uint32_t bytes = 54 + 240 * 240 * 3;
-  put32(2, bytes); put32(10, 54); put32(14, 40);
-  put32(18, 240); put32(22, 240); header[26] = 1; header[28] = 24;
-  put32(34, 240 * 240 * 3);
-  server.sendHeader("Cache-Control", "no-store");
-  server.setContentLength(bytes);
-  server.send(200, "image/bmp", "");
-  WiFiClient client = server.client();
-  client.write(header, sizeof(header));
-  uint8_t row[240 * 3];
-  for (int y = 239; y >= 0 && client.connected(); --y) {
-    for (int x = 0; x < 240; ++x) {
-      const uint16_t color = gCanvas.readPixel(x, y);
-      row[x * 3] = ((color & 31) * 255) / 31;
-      row[x * 3 + 1] = (((color >> 5) & 63) * 255) / 63;
-      row[x * 3 + 2] = (((color >> 11) & 31) * 255) / 31;
-    }
-    if (client.write(row, sizeof(row)) != sizeof(row)) break;
-    delay(0);
-  }
-}
 }  // namespace HardwareDemo

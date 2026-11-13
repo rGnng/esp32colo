@@ -1,12 +1,23 @@
 # ColoPLAY LCD probe
 
-Experimental ESP32-S3 diagnostic for the **published ColoPLAY V1 pinout**. The physical device has not been identified or tested. This reads possible controller responses; it does not promise an exact model ID.
+Optional RAM-only ESP32-S3 research diagnostic. The main firmware now drives
+this unit's display, and the factory image's selected GC9A01 family driver is
+[identified from executable code](../../docs/firmware-gpio-evidence.md#lcd-recovered-from-executable-code).
+This probe itself has not been exercised on the device and is not needed for
+normal operation. It reads possible responses rather than promising an exact
+controller variant.
 
-The application is built entirely for RAM, without SPI flash or PSRAM support. Load it with the ROM downloader's `load_ram` command. It does not replace the factory firmware, and a normal power cycle starts the existing firmware again. ESP-IDF labels RAM application builds experimental. Device security settings may prevent RAM downloads.
+The application is built entirely for RAM, without SPI flash or PSRAM support.
+Load it with the ROM downloader's `load_ram` command. It does not rewrite flash;
+a normal power cycle starts the application already installed there. ESP-IDF
+labels RAM application builds experimental. Device security settings may prevent
+RAM downloads.
 
 ## Why detection is uncertain
 
-The [screen-adapter schematic](https://x.cololight.com/mweb/docs/en/assets/files/Colo%20Play_Screen_Project-99c3422ebbed0e1264a28aece792130e.pdf) shows a single LCD data line and no separate MISO. It does not specify the controller or the panel's interface straps. Some controllers can return register data on the shared data line; others require an unconnected output or disable reads in the selected interface mode. The absence of a response does not identify the controller or prove the display is faulty.
+The recovered factory SPI configuration has MISO=-1 and uses MOSI GPIO13.
+That is a software configuration, not proof of the physical panel interface
+straps or available readback wiring. Some controllers can return register data on the shared data line; others require an unconnected output or disable reads in the selected interface mode. The absence of a response does not identify the controller or prove the display is faulty.
 
 The probe sends common DCS read commands (`04`, `09`, `0A`, `0B`, `0C`, `DA`, `DB`, `DC`) with a slow software SPI clock. GPIO13 is released to input for the response. Each read is repeated with weak pull-up and pull-down bias, alongside captures with CS inactive. All eight captured bytes are printed, including any dummy bits and undriven trailing bits. Different commands/controllers can need different dummy-cycle counts; the program makes no automatic ID-to-driver assignment.
 
@@ -14,17 +25,16 @@ No LCD pins are configured at startup. `probe` and `reset` configure the referen
 
 ## Reference pins
 
-From the [main-board schematic, pages 1–2](https://x.cololight.com/mweb/docs/en/assets/files/Colo%20Play_Main_Project-6e07adc16d0874f1845753f5d655f4af.pdf):
+The display assignments below are recovered from the [factory application](../../docs/firmware-gpio-evidence.md#lcd-recovered-from-executable-code). Shared-line readback remains an experiment:
 
 | Signal | GPIO |
 |---|---:|
-| LCD_RS / D-C | 11 |
-| LCD_CS | 12 |
-| LCD_MOSI / shared data | 13 |
-| LCD_CLK | 14 |
-| LCD_TE | 17 (not used by the probe) |
-| LCD_BLK / backlight transistor | 18 |
-| LCD_REST | 45 |
+| D/C | 11 |
+| CS | 12 |
+| MOSI / attempted shared data | 13 |
+| Clock | 14 |
+| Backlight output | 18 |
+| Reset | 45 |
 
 ## Build
 
@@ -41,7 +51,8 @@ ESP-IDF may print generic flash instructions after the build. Use the RAM-loadin
 
 ## Run from RAM
 
-First confirm the physical board matches the reference pinout. On that design, enter ROM download mode by removing all power, holding **REC_KEY and the centre knob pressed**, then reconnecting USB and releasing both after about a second. They pull GPIO0 and GPIO46 low at reset. See the [Espressif boot-mode requirements](https://docs.espressif.com/projects/esptool/en/latest/esp32s3/advanced-topics/boot-mode-selection.html).
+Use this only with the captured unit or an independently verified matching device.
+The established [ROM download sequence](../../docs/flash.md#first-usb-flash) removes all power, holding **REC_KEY and the centre knob pressed**, then reconnecting USB and releasing both after about a second. They pull GPIO0 and GPIO46 low at reset. See the [Espressif boot-mode requirements](https://docs.espressif.com/projects/esptool/en/latest/esp32s3/advanced-topics/boot-mode-selection.html).
 
 With ESP-IDF's **esptool 4.13.0** active, substitute the actual serial port below:
 
@@ -61,7 +72,7 @@ probe
 probe 3
 ```
 
-`reset` optionally pulses the LCD reset pin before another probe. Close miniterm with Ctrl+] without toggling reset lines. Power-cycle normally, with REC_KEY and the knob released, to return to the factory application.
+`reset` optionally pulses the LCD reset pin before another probe. Close miniterm with Ctrl+] without toggling reset lines. Power-cycle normally, with REC_KEY and the knob released, to return to the application already installed in flash.
 
 ## Interpret the capture
 
@@ -74,4 +85,6 @@ Reference: [Espressif SPI LCD interface modes](https://docs.espressif.com/projec
 
 ## Validation
 
-Built locally with ESP-IDF `v5.5.6-dirty` (an existing SDK checkout) and Xtensa GCC 14.2.0, with warnings treated as errors for the probe source. `esptool image_info` validated the 131,344-byte image and its internal RAM segments, including RTC RAM; there are no flash-mapped segments. An eight-case host GPIO simulation checked command/response bits in modes 0 and 3, data-line release before panel output, and inactive-CS captures with both biases. This checks software behavior only. No device was available for a hardware trial, and no controller has been identified.
+Built locally with ESP-IDF `v5.5.6-dirty` (an existing SDK checkout) and Xtensa GCC 14.2.0, with warnings treated as errors for the probe source. `esptool image_info` validated the 131,344-byte image and its internal RAM segments, including RTC RAM; there are no flash-mapped segments. An eight-case host GPIO simulation checked command/response bits in modes 0 and 3, data-line release before panel output, and inactive-CS captures with both biases. This checks software behavior only. This was software-only validation; the probe still has no recorded device trial.
+Factory-code analysis separately identifies the selected GC9A01 family driver;
+physical single-line readback and the exact panel variant remain unresolved.

@@ -40,7 +40,7 @@ void settingsChecks() {
   using namespace UsbNetworkSettings;
   assert(valid(settings));
   uint8_t ip[4];
-  assert(parse("172.32.29.21", ip) && !std::memcmp(ip, settings.address, 4));
+  assert(parse("172.32.29.1", ip) && !std::memcmp(ip, settings.address, 4));
   for (const auto *text : {"", "1.2.3", "1.2.3.4.5", "1.2.3.256", "1.2..3", "1.2.3.-1", "http://1.2.3.4"})
     assert(!parse(text, ip));
   auto invalid = settings;
@@ -51,6 +51,12 @@ void settingsChecks() {
   invalid = settings; std::memcpy(invalid.lease, invalid.address, 4); assert(!valid(invalid));
   invalid = settings; invalid.address[0] = invalid.lease[0] = 127; assert(!valid(invalid));
   invalid = settings; invalid.address[0] = invalid.lease[0] = 224; assert(!valid(invalid));
+  assert(settings.prefix==30 && settings.lease[3]==2);
+  uint8_t host[4]; assert(peer(settings.address,30,host) && !std::memcmp(host,settings.lease,4));
+  assert(parse("172.32.29.2",ip) && peer(ip,30,host) && host[3]==1);
+  assert(parse("172.32.29.3",ip) && !peer(ip,30,host));
+  auto old=settings; old.prefix=24; old.address[3]=21; old.lease[3]=30;
+  assert(legacyDefault(old)); old.address[3]=22; assert(!legacyDefault(old));
   std::cout << "PASS USB IPv4/subnet and one-address pool validation\n";
 }
 
@@ -62,7 +68,7 @@ void exchangeChecks() {
   assert(r[0] == 2 && !std::memcmp(r.data() + 4, discover.data() + 4, 4));
   assert(!std::memcmp(r.data() + 16, settings.lease, 4));
   assert(!std::memcmp(option(r, 54), settings.address, 4));
-  assert(!std::memcmp(option(r, 1), "\xff\xff\xff\0", 4));
+  assert(!std::memcmp(option(r, 1), "\xff\xff\xff\xfc", 4));
   assert(option(r, 53)[0] == 2);
   assert(!option(r, 3) && !option(r, 6) && !option(r, 121) && !option(r, 249));
   assert(!std::memcmp(option(r, 51), "\0\0\x0e\x10", 4));

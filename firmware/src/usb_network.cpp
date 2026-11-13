@@ -1,8 +1,14 @@
+#include "device_log.h"
 #include "usb_network.h"
 #include "usb_network_settings.h"
 #include "usb_dhcp.h"
 #include <Preferences.h>
 #include <USB.h>
+#include "usb_experiment.h"
+#ifdef COLOPLAY_USB_CONCURRENCY_TEST
+#include <USBHIDVendor.h>
+#include "hardware_demo.h"
+#endif
 #include <coloplay_ecm.h>
 #include <esp32-hal-tinyusb.h>
 #include <device/usbd_pvt.h>
@@ -19,6 +25,10 @@
 
 extern "C" {
 void coloplay_usb_prepare_serial_phy(void);
+#ifdef COLOPLAY_USB_CONCURRENCY_TEST
+void coloplay_usb_test_otg_phy(void);
+uint32_t coloplay_usb_test_phy_state(void);
+#endif
 // The ECM MAC descriptor is the host NIC's address. The device uses a
 // different locally administered address on the other end of the link.
 uint8_t tud_network_mac_address[6] = {};
@@ -39,6 +49,16 @@ UsbDhcp::Lease gLease;
 portMUX_TYPE gLeaseLock = portMUX_INITIALIZER_UNLOCKED;
 char gMacString[13] = {}, gSerial[25] = {};
 uint8_t gInterface = 0;
+#ifdef COLOPLAY_USB_CONCURRENCY_TEST
+USBHIDVendor gTestHid(63,false);
+USBHID gTestHidStatus;
+std::atomic<uint32_t> gHidGets{0},gHidSets{0},gHidOutputs{0};
+bool gTestArmed=false;
+int gTestWanted=0;
+uint32_t gTestSwitchAt=0,gTestDeadline=0;
+const char *gTestPhase="serial-jtag-baseline";
+String gHostReport="null";
+#endif
 enum Stage : uint32_t { kIdle, kSerialMode, kNetif, kDescriptors, kSerialStop,
   kUsbBegin, kDescriptorCallback, kDriverInit, kRunning, kHostInterface, kStageCount };
 const char *const kStages[] = {"idle", "serial-jtag", "netif", "register-descriptors",
@@ -204,6 +224,10 @@ void loadSettings() {
       gPrefs.getBytes("settings", &stored, sizeof(stored)) == sizeof(stored) &&
       UsbNetworkSettings::valid(stored)) {
     gSettings = stored; gStored = true;
+    if (UsbNetworkSettings::legacyDefault(gSettings)) {
+      const auto mode=gSettings.mode; gSettings=UsbNetworkSettings::Stored{}; gSettings.mode=mode;
+      gStored=gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);
+    }
   } else if (gPrefsOpen) {
     gStored = gPrefs.putBytes("settings", &gSettings, sizeof(gSettings)) == sizeof(gSettings);
   }
@@ -212,7 +236,12 @@ void loadSettings() {
 void begin(bool recoveryMode) {
   gRecovery = recoveryMode;
   gActive = gSettings;
+#ifdef COLOPLAY_USB_CONCURRENCY_TEST
+  if (gRecovery || !gTestArmed) { setStage(kSerialMode); return; }
+  gActive.mode=UsbNetworkSettings::kEthernet; // Volatile test choice, never saved.
+#else
   if (gRecovery || gActive.mode == UsbNetworkSettings::kSerialJtag) { setStage(kSerialMode); return; }
+#endif
   esp_efuse_mac_get_default(tud_network_mac_address);
   tud_network_mac_address[0] = (tud_network_mac_address[0] | 2) & 0xFE;
   tud_network_mac_address[5] ^= 0x42;
@@ -229,17 +258,39 @@ void begin(bool recoveryMode) {
   setStage(kDescriptors);
   gError = tinyusb_enable_interface(USB_INTERFACE_CUSTOM, TUD_CDC_ECM_DESC_LEN, descriptor);
   if (gError) return;
+#ifdef COLOPLAY_USB_CONCURRENCY_TEST
+  gTestHid.onEvent([](void *,esp_event_base_t,int32_t event,void *) {
+    if (event==ARDUINO_USB_HID_VENDOR_GET_FEATURE_EVENT) ++gHidGets;
+    if (event==ARDUINO_USB_HID_VENDOR_SET_FEATURE_EVENT) ++gHidSets;
+    if (event==ARDUINO_USB_HID_VENDOR_OUTPUT_EVENT) ++gHidOutputs;
+  });
+  gTestHid.begin();
+  USB.VID(0x303A); USB.productName("ColoPlay CDC HID JTAG experiment");
+#else
   USB.productName("ColoPLAY USB Network");
+#endif
   USB.manufacturerName("ColoPLAY");
   USB.serialNumber(gSerial);
-  USB.PID(0x4002);  // Development identity distinct from the fixed Serial/JTAG PID.
+#ifdef COLOPLAY_USB_CONCURRENCY_TEST
+  USB.PID(0x4003);
+#else
+  USB.PID(0x4002);
+#endif
+  // Development identity distinct from the fixed Serial/JTAG PID.
   USB.onEvent([](void *, esp_event_base_t, int32_t event, void *) {
     if (event == ARDUINO_USB_STOPPED_EVENT) markLink(false);
     if (event == ARDUINO_USB_RESUME_EVENT) usbd_defer_func(pumpTx, nullptr, false);
   });
-  Serial.println("[usb] starting CDC-ECM; select serial/JTAG mode in web settings to restore JTAG");
+  DeviceLog::println("[usb] starting CDC-ECM; select serial/JTAG mode in web settings to restore JTAG");
   setStage(kSerialStop);
+#ifndef COLOPLAY_USB_CONCURRENCY_TEST
   Serial.end();
+#else
+  // Deliberately keep the fixed Serial/JTAG driver initialized while starting
+  // CDC-ECM + vendor HID. Actual PHY ownership is measured, never inferred
+  // from both software drivers being initialized.
+  Serial.begin(115200);
+#endif
   delay(50);  // Let the host see removal of the fixed Serial/JTAG device.
   setStage(kUsbBegin);
   gStarted = USB.begin();
@@ -270,19 +321,23 @@ String statusJson() {
   char client[18] = {};
   if (bound) snprintf(client, sizeof(client), "%02x:%02x:%02x:%02x:%02x:%02x",
     lease.mac[0], lease.mac[1], lease.mac[2], lease.mac[3], lease.mac[4], lease.mac[5]);
+  bool activeOtg=gStarted;
+#ifdef COLOPLAY_USB_CONCURRENCY_TEST
+  activeOtg=gStarted&&((coloplay_usb_test_phy_state()&3u)==3u);
+#endif
   String json;
   json.reserve(700);
   json += "{\"mode\":\"" + String(gSettings.mode == UsbNetworkSettings::kEthernet ? "ethernet" : "serial_jtag");
-  json += "\",\"active_mode\":\"" + String(gStarted ? "ethernet" : "serial_jtag");
+  json += "\",\"active_mode\":\"" + String(activeOtg ? "ethernet" : "serial_jtag");
   json += "\",\"address\":\"" + address(gSettings.address);
   json += "\",\"prefix\":" + String(gSettings.prefix);
   json += ",\"dhcp_address\":\"" + address(gSettings.lease);
   json += "\",\"gateway\":null,\"dns\":null,\"dhcp_pool_size\":1";
   json += ",\"protocol\":\"CDC-ECM\",\"stored\":" + String(gStored ? "true" : "false");
-  json += ",\"ready\":" + String(gStarted && gReady.load() ? "true" : "false");
-  json += ",\"connected\":" + String(gStarted && tud_connected() ? "true" : "false");
+  json += ",\"ready\":" + String(activeOtg && gReady.load() ? "true" : "false");
+  json += ",\"connected\":" + String(activeOtg && tud_connected() ? "true" : "false");
   json += ",\"link_up\":" + String(gLink.load() ? "true" : "false");
-  json += ",\"jtag_available\":" + String(gStarted ? "false" : "true");
+  json += ",\"jtag_available\":" + String(activeOtg ? "false" : "true");
   json += ",\"recovery_override\":" + String(gRecovery ? "true" : "false");
   json += ",\"error\":" + String(gError);
   json += ",\"stage\":\"" + String(kStages[gStage]) + "\",\"last_boot_stage\":\"" + kStages[gLastStage] + "\"";
@@ -294,6 +349,61 @@ String statusJson() {
   json += ",\"client_mac\":\"" + String(client) + "\"}";
   return json;
 }
+
+#ifdef COLOPLAY_USB_CONCURRENCY_TEST
+String experimentJson() {
+  const uint32_t raw=coloplay_usb_test_phy_state();
+  const bool otg=(raw&3u)==3u;
+  String out="{\"experiment\":true,\"phase\":\""+String(gTestPhase)+"\",\"phy_raw\":"+String(raw);
+  out+=",\"phy_owner\":\""+String(!(raw&1u)?"hardware-default-unverified":otg?"usb-otg":"usb-serial-jtag")+"\"";
+  out+=",\"otg_serial\":\""+String(gSerial)+"\"";
+  out+=",\"jtag_pad_enabled\":"+String(raw&4u?"true":"false");
+  out+=",\"jtag_external_phy_selected\":"+String(raw&8u?"true":"false");
+  out+=",\"fixed_serial_driver_kept_initialized\":true";
+  out+=",\"otg_stack_started\":"+String(gStarted?"true":"false");
+  out+=",\"hid_stack_ready\":"+String(gStarted&&gTestHidStatus.ready()?"true":"false");
+  out+=",\"hid_ready_on_internal_phy\":"+String(otg&&gStarted&&gTestHidStatus.ready()?"true":"false");
+  out+=",\"hid_get_feature\":"+String(gHidGets.load())+",\"hid_set_feature\":"+String(gHidSets.load());
+  out+=",\"hid_outputs\":"+String(gHidOutputs.load())+",\"jtag_host_verified\":null";
+  out+=",\"vid\":12346,\"pid\":16387,\"hid_report_id\":6,\"hid_payload_bytes\":63";
+  out+=",\"error\":"+String(gError)+",\"usb\":"+statusJson()+"}";
+  return out;
+}
+void experimentSetup(WebServer &server) {
+  server.on("/api/usb-experiment",HTTP_GET,[&server] {server.send(200,"application/json",experimentJson());});
+  server.on("/api/usb-experiment",HTTP_POST,[&server] {
+    const String mode=server.arg("mode");
+    if (mode!="coexist"&&mode!="jtag") {server.send(400,"application/json","{\"error\":\"mode must be coexist or jtag\"}");return;}
+    if (!HardwareDemo::ready()||gRecovery) {server.send(409,"application/json","{\"error\":\"hardware is not ready or is in recovery\"}");return;}
+    gTestWanted=mode=="coexist"?1:2;gTestSwitchAt=millis()+300;
+    server.send(200,"application/json","{\"scheduled\":true}");
+  });
+  server.on("/api/usb-experiment/report",HTTP_GET,[&server] {server.send(200,"application/json",gHostReport);});
+  server.on("/api/usb-experiment/report",HTTP_POST,[&server] {
+    const String body=server.arg("plain");
+    if (body.length()>32768||!body.startsWith("{")) {server.send(400,"application/json","{\"error\":\"expected bounded JSON host report\"}");return;}
+    gHostReport=body;server.send(200,"application/json","{\"stored_in_ram\":true}");
+  });
+}
+void experimentTick() {
+  if (gTestDeadline&&static_cast<int32_t>(millis()-gTestDeadline)>=0) {gTestWanted=2;gTestSwitchAt=millis();gTestDeadline=0;}
+  if (!gTestWanted||static_cast<int32_t>(millis()-gTestSwitchAt)<0) return;
+  const int wanted=gTestWanted;gTestWanted=0;
+  if (wanted==1) {
+    gTestPhase="starting-cdc-hid-with-fixed-driver";
+    if (!gStarted) {gTestArmed=true;begin(false);}
+    else {tud_disconnect();coloplay_usb_test_otg_phy();tud_connect();}
+    // Reopen the fixed driver too; do not switch the mux back behind TinyUSB.
+    Serial.begin(115200);
+    gTestPhase=gStarted?"coexist-attempt":"usb-start-failed";
+    gTestDeadline=millis()+180000;
+  } else {
+    if (gStarted) tud_disconnect();
+    markLink(false);coloplay_usb_prepare_serial_phy();Serial.begin(115200);
+    gTestPhase="jtag-with-otg-stack-retained";gTestDeadline=0;
+  }
+}
+#endif
 
 bool configure(WebServer &server, String &error) {
   if (!server.hasArg("mode") && !server.hasArg("address") &&
@@ -318,6 +428,10 @@ bool configure(WebServer &server, String &error) {
       error = "prefix must be 1..30"; return false;
     }
     candidate.prefix = prefix.toInt();
+  }
+  if (!server.hasArg("dhcp_address") && (server.hasArg("address") || server.hasArg("prefix")) &&
+      !UsbNetworkSettings::peer(candidate.address,candidate.prefix,candidate.lease)) {
+    error="USB IP must be a usable host in the selected subnet"; return false;
   }
   if (!UsbNetworkSettings::valid(candidate)) {
     error = "use two different host addresses in the same subnet, with prefix 1..30"; return false;

@@ -1,3 +1,4 @@
+#include "device_log.h"
 #include "audio_demo.h"
 #include "board_pins.h"
 #include "demo_levels.h"
@@ -121,7 +122,7 @@ void run(void *) {
 
 void fail(const char *step, esp_err_t error) {
   gState.error = error;
-  Serial.printf("[audio] %s failed: %s\n", step, esp_err_to_name(error));
+  DeviceLog::printf("[audio] %s failed: %s\n", step, esp_err_to_name(error));
   digitalWrite(Board::kAmpEnable, LOW);
 }
 }  // namespace
@@ -156,7 +157,7 @@ void begin() {
     }
   }
   if (!gState.address) return fail("codec detection", ESP_ERR_NOT_FOUND);
-  Serial.printf("[audio] codec I2C=0x%02x ID=%02x%02x rev=%02x\n",
+  DeviceLog::printf("[audio] codec I2C=0x%02x ID=%02x%02x rev=%02x\n",
                 gState.address, gState.idHigh, gState.idLow, gState.version);
   if (gState.idHigh != 0x83 || gState.idLow != 0x11) {
     return fail("unexpected codec ID", ESP_ERR_NOT_SUPPORTED);
@@ -212,7 +213,7 @@ void begin() {
   // CS8120 shutdown is low. Codec and a zero-filled DMA ring are ready
   // before enabling the speaker; pause() also disables the amplifier.
   digitalWrite(Board::kAmpEnable, HIGH);
-  Serial.println("[audio] 16 kHz stereo I2S clocks, mono ADC/DAC ready");
+  DeviceLog::println("[audio] 16 kHz stereo I2S clocks, mono ADC/DAC ready");
 }
 
 Snapshot snapshot() {

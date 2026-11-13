@@ -3,8 +3,8 @@
 
 The factory bootloader lives at 0x0 and reads its partition table at 0x10000.
 The Arduino application reads its table at 0x8000, so this script writes the
-same factory table at 0x8000 and the application at 0x20000.  The factory
-bootloader, its table at 0x10000, NVS, PHY data and OTA slots stay untouched.
+same factory table at 0x8000 and the application at 0x20000. The factory
+bootloader, its table at 0x10000, NVS, PHY data, OTA metadata and app1 stay untouched.
 
 Usage:
     .venv/bin/python scripts/flash_bootstrap.py [--timeout 600]

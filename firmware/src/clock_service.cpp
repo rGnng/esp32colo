@@ -1,3 +1,4 @@
+#include "device_log.h"
 #include "clock_service.h"
 #include "clock_settings.h"
 #include <Preferences.h>
@@ -18,6 +19,7 @@ constexpr time_t kEarliestTime = 1704067200;  // 2024-01-01; never show a 1970 c
 void onSync(timeval *tv) {
   gLastSync.store(static_cast<uint32_t>(tv->tv_sec));
   gSyncCount.fetch_add(1);
+  DeviceLog::println("[clock] NTP synchronized");
 }
 
 void applyZone() {
@@ -36,11 +38,14 @@ void begin() {
     gSettings = stored;
     gStored = true;
   } else if (gPrefsOpen) {
+    ClockSettings::LegacyStored legacy;
+    if (gPrefs.getBytesLength("settings")==sizeof(legacy) &&
+        gPrefs.getBytes("settings",&legacy,sizeof(legacy))==sizeof(legacy)) ClockSettings::migrate(legacy,gSettings);
     gStored = gPrefs.putBytes("settings", &gSettings, sizeof(gSettings)) == sizeof(gSettings);
   }
   applyZone();
   esp_sntp_set_time_sync_notification_cb(onSync);
-  Serial.printf("[clock] server=%s timezone=%s stored=%d\n",
+  DeviceLog::printf("[clock] server=%s timezone=%s stored=%d\n",
                 gSettings.ntpServer, gSettings.timezone, gStored);
 }
 
@@ -49,9 +54,10 @@ void requestSync() {
   gStarted = false;
   if (WiFi.status() != WL_CONNECTED) return;
   esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
-  esp_sntp_setservername(0, gSettings.ntpServer);
-  esp_sntp_setservername(1, nullptr);
-  esp_sntp_setservername(2, nullptr);
+  int slot=0;
+  for (char *server : {gSettings.ntpServer,gSettings.ntpServer2,gSettings.ntpServer3})
+    if (server[0]) esp_sntp_setservername(slot++,server);
+  while (slot<3) esp_sntp_setservername(slot++,nullptr);
   esp_sntp_set_sync_interval(kSyncIntervalMs);
   esp_sntp_init();
   gStarted = true;
@@ -88,7 +94,8 @@ String statusJson(bool includeZones) {
   String json;
   json.reserve(includeZones ? 1600 : 500);
   json += "{\"ntp_server\":\"" + String(gSettings.ntpServer);
-  json += "\",\"timezone\":\"" + String(gSettings.timezone);
+  json += "\",\"ntp_servers\":[\""+String(gSettings.ntpServer)+"\",\""+gSettings.ntpServer2+"\",\""+gSettings.ntpServer3+"\"]";
+  json += ",\"timezone\":\"" + String(gSettings.timezone);
   json += "\",\"stored\":" + String(gStored ? "true" : "false");
   json += ",\"time_valid\":" + String(s.valid ? "true" : "false");
   json += ",\"synced\":" + String(s.synced ? "true" : "false");
@@ -112,17 +119,18 @@ String statusJson(bool includeZones) {
 }
 
 bool configure(WebServer &server, String &error) {
-  if (!server.hasArg("ntp_server") && !server.hasArg("timezone")) {
-    error = "ntp_server or timezone required"; return false;
+  if (!server.hasArg("ntp_server") && !server.hasArg("ntp_server2") && !server.hasArg("ntp_server3") && !server.hasArg("timezone")) {
+    error = "NTP server or timezone required"; return false;
   }
   ClockSettings::Stored candidate = gSettings;
-  if (server.hasArg("ntp_server")) {
-    String name = server.arg("ntp_server");
-    name.trim();
-    if (!ClockSettings::validServer(name.c_str())) {
-      error = "NTP server must be a hostname or IPv4 address (max 253 characters)"; return false;
+  const char *fields[]={"ntp_server","ntp_server2","ntp_server3"};
+  char *buffers[]={candidate.ntpServer,candidate.ntpServer2,candidate.ntpServer3};
+  for (int i=0;i<3;++i) if (server.hasArg(fields[i])) {
+    String name=server.arg(fields[i]); name.trim();
+    if ((!i&&name.isEmpty())||(!name.isEmpty()&&!ClockSettings::validServer(name.c_str()))) {
+      error="NTP servers must be hostnames or IPv4 addresses; the primary server is required"; return false;
     }
-    name.toCharArray(candidate.ntpServer, sizeof(candidate.ntpServer));
+    name.toCharArray(buffers[i],254);
   }
   if (server.hasArg("timezone")) {
     const String zone = server.arg("timezone");
@@ -134,7 +142,8 @@ bool configure(WebServer &server, String &error) {
   }
   // Stop before replacing the long-lived hostname buffer borrowed by SNTP.
   if (esp_sntp_enabled()) esp_sntp_stop();
-  const bool changedServer = std::strcmp(candidate.ntpServer, gSettings.ntpServer) != 0;
+  const bool changedServer = std::strcmp(candidate.ntpServer, gSettings.ntpServer) != 0 ||
+    std::strcmp(candidate.ntpServer2,gSettings.ntpServer2)!=0 || std::strcmp(candidate.ntpServer3,gSettings.ntpServer3)!=0;
   gSettings = candidate;
   gStored = true;
   if (changedServer) gLastSync.store(0);

@@ -1,5 +1,10 @@
 # 原厂固件备份与分析
 
+本文只记录保存的原厂镜像、随备份附带的设备日志及其解析结果，不使用硬件图纸。
+分区内容、空白区域与 OTA 选择描述的是原始备份，不是当前自定义固件的运行状态。
+当前操作入口：[固件指南](firmware.md)、[构建与恢复](flash.md)；
+原厂引脚与协议证据：[GPIO](firmware-gpio-evidence.md)、[LED](firmware-led-evidence.md)。
+
 ## 备份
 
 2026-11-13 从用户上传的 `cololight_firmware_backups.7z` 导入。
@@ -113,7 +118,7 @@ CRC=`0x4743989a`，CRC 校验通过；第二条记录（`0x16000`）全 `0xff`�
 原厂 Lua 明确调用 `qt.init(48)` 并创建 `qt.new(14)`。已追踪 `qt:write()` 的
 绑定表、编码函数和 SPI 配置，恢复出 **GPIO48 / SPI3 / 3.2 MHz / GRB / 14 槽帧**。
 每个 LED 数据位编码为 `1000` 或 `1100`，480 字节传输含前后低电平复位填充。
-这项结论来自固件二进制，而不是按 LED 封装或原理图猜测协议。
+这项结论来自固件二进制，由原厂代码和初始化数据恢复。
 
 地址、查表值和重现脚本见 [LED 固件拆解](firmware-led-evidence.md)。
 复制该格式的 `0.2.4-factory-led` 已通过 HTTP OTA 安装；用户确认环灯与四键灯都工作。
@@ -161,7 +166,7 @@ esptool --chip esp32s3 --port "$SERIAL_PORT" --before no-reset --after no-reset 
 
 先保留在下载模式完成比较，再正常断电重启，以免原厂程序运行后更新 NVS 或 OTA 元数据，
 影响逐字节比较。完整写回会覆盖当前 Flash 中的 bootloader、分区、应用、NVS 和文件系统；
-不会还原 eFuse，也会覆盖自定义固件在 NVS 中保存的 WiFi 配置。
+不会还原 eFuse，也会覆盖自定义固件在 NVS 中保存的 WiFi、时钟、USB、场景和灯光配置。
 由于上述 bootloader 头部摘要差异及尚未进行的恢复试验，不把“可解析备份”等同于“已验证可恢复”。
 
 参考：[ESP-IDF 分区表](https://docs.espressif.com/projects/esp-idf/en/v5.5.2/esp32s3/api-guides/partition-tables.html)、

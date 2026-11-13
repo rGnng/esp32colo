@@ -1,5 +1,9 @@
 # Factory LED transmitter teardown
 
+This is factory-image evidence. Current controls and custom-firmware behavior
+are documented in the [firmware guide](firmware.md#lighting); the compact
+[GPIO map](gpio-map.md) contains only recovered factory assignments.
+
 The replacement LED driver in `0.2.4-factory-led` was reconstructed from the
 original firmware's embedded Lua, native call path, initialized data and pixel
 encoder. This analysis uses the factory binary as evidence. After HTTP OTA,
@@ -117,8 +121,9 @@ The user then confirmed **all lights work**, including the four key LEDs.
 Earlier code sent only nine pixels and used generic NeoPixel pulse timing.
 Both the software capacity and waveform have now been corrected. The earlier
 documentation's parallel-branch claim was incorrect and has been removed.
-The demo uses ring slots 0–8 and key slots 9–12; slot 13 is reserved during the
-normal animation and included in the all-white test. Exact key-to-pixel spatial
+The current custom implementation uses ring slots 0–8 and key slots 9–12;
+slot 13 stays off during normal output and temporary color tests. This grouping
+is a custom implementation choice rather than a recovered physical layout. Exact key-to-pixel spatial
 order and color calibration can be refined separately if needed.
 
 The [broader GPIO teardown](firmware-gpio-evidence.md) records the independently

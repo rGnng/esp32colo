@@ -1,3 +1,4 @@
+#include "device_log.h"
 #include "led_strip.h"
 #include "board_pins.h"
 #include "factory_led_frame.h"
@@ -37,7 +38,7 @@ bool begin() {
     return false;
   }
   show();
-  Serial.println("[leds] factory SPI3 format: GPIO48, 3.2 MHz, 14 RGB slots");
+  DeviceLog::println("[leds] factory SPI3 format: GPIO48, 3.2 MHz, 14 RGB slots");
   return gError == ESP_OK;
 }
 

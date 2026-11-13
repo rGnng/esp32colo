@@ -1,0 +1,22 @@
+// Small, fixed Bootstrap 5.3.8 subset. Native dialogs and app handlers supply JS.
+@import "vendor/bootstrap/scss/functions";
+$enable-transitions: false;
+$enable-smooth-scroll: false;
+$enable-validation-icons: false;
+$font-size-base: .875rem;
+$input-btn-padding-y: .25rem;
+$input-btn-padding-x: .5rem;
+@import "vendor/bootstrap/scss/variables";
+@import "vendor/bootstrap/scss/variables-dark";
+@import "vendor/bootstrap/scss/maps";
+@import "vendor/bootstrap/scss/mixins";
+@import "vendor/bootstrap/scss/root";
+@import "vendor/bootstrap/scss/reboot";
+@import "vendor/bootstrap/scss/forms/labels";
+@import "vendor/bootstrap/scss/forms/form-control";
+@import "vendor/bootstrap/scss/forms/form-select";
+@import "vendor/bootstrap/scss/forms/form-check";
+@import "vendor/bootstrap/scss/forms/form-range";
+@import "vendor/bootstrap/scss/buttons";
+@import "vendor/bootstrap/scss/nav";
+@import "vendor/bootstrap/scss/tables";
