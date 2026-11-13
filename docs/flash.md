@@ -2,7 +2,7 @@
 
 当前可用的固件是 `firmware/` 下的最小 bring-up 应用：
 
-- 连接 `OnIoT` WiFi（凭据在 `firmware/include/secrets.h`）
+- 连接 `OnIoT` WiFi（凭据保存在 NVS，首次启动从 `secrets.h` 播种）
 - `http://coloplay.local/` 状态页，`/api/status` JSON
 - ArduinoOTA 无线升级
 - 读取 GPIO0 / GPIO15 / GPIO46 按键状态
@@ -105,10 +105,49 @@ curl http://coloplay.local/api/status
 本次实测 IP 为 `10.0.0.225`，`/api/status` 返回：
 
 ```json
-{"firmware":"0.1.1-ota","wifi":{"connected":true,"ssid":"OnIoT","ip":"10.0.0.225"}}
+{"firmware":"0.1.3-nvs","wifi":{"connected":true,"stored_ssid":"OnIoT","source":"nvs","ip":"10.0.0.225"}}
 ```
 
-## 4. OTA 升级（已验证）
+## 4. WiFi 凭据（NVS）
+
+凭据保存在 NVS 的 `wifi` 命名空间（键 `ssid` / `pass`），不再每次从编译常量读取：
+
+- 首次启动时 NVS 为空，会从 `firmware/include/secrets.h` 播种一次
+- 之后以 NVS 为准，重启 / OTA 都不会丢失
+- 网页底部有修改表单；保存后设备自动重启
+- `GET /api/wifi` 返回当前存储的 SSID（不返回密码）
+
+命令行修改：
+
+```bash
+curl -X POST --data-urlencode 'ssid=OnIoT' \
+  --data-urlencode 'password=<password>' \
+  http://coloplay.local/api/wifi
+```
+
+如果新凭据写错导致 WiFi 连不上，用 USB 串口恢复（115200）：
+
+```text
+wifi-reset
+```
+
+会清空 NVS 的 `wifi` 命名空间并重启，下次启动重新从 `secrets.h` 播种。
+也可以直接设置新凭据：
+
+```text
+wifi <ssid> <password>
+```
+
+其他串口命令：
+
+```text
+status
+```
+
+注意：NVS 分区就是原厂的 `nvs`（`0x11000`）。恢复原厂 16 MB 备份会同时恢复
+原厂 NVS，自定义 WiFi 配置会被覆盖。
+
+## 5. OTA 升级（已验证）
 
 ```bash
 ./scripts/ota_upload.sh 10.0.0.225
@@ -119,9 +158,11 @@ curl http://coloplay.local/api/status
 
 升级过程：
 
-1. 应用写入 `ota_app1`（`0x4a0000`）
+1. ArduinoOTA 选择当前未运行的槽：
+   - 当前在 app0（`0x20000`）→ 写入 app1（`0x4a0000`）
+   - 当前在 app1（`0x4a0000`）→ 写入 app0（`0x20000`）
 2. 更新 `otadata`
-3. 重启后原厂 bootloader 从 `0x4a0000` 启动新固件
+3. 重启后原厂 bootloader 从新槽启动
 
 串口会显示：
 
@@ -131,22 +172,31 @@ curl http://coloplay.local/api/status
 [ota] update finished
 ```
 
-本次已从 `0.1.0-bringup` OTA 到 `0.1.1-ota`，并确认 bootloader 打印
-`Loaded app from partition at offset 0x4a0000`。
+已实测两个方向：
 
-## 5. 恢复出厂
+```text
+Loaded app from partition at offset 0x4a0000
+Loaded app from partition at offset 0x20000
+```
+
+当前运行版本为 `0.1.3-nvs`，WiFi 凭据从 NVS 读取。
+
+## 6. 恢复出厂
 
 ```bash
 esptool --port /dev/cu.usbmodemXXXX --baud 460800 \
   write-flash 0 backups/coloplay-factory-20261113-131459.bin
 ```
 
-## 6. 已知限制
+## 7. 已知限制
 
 - 屏幕、音频、按键灯、旋钮尚未驱动；这是刻意的最小固件。
 - `psram_bytes` 显示 0：当前 PSRAM 初始化未启用/未验证，不影响 WiFi/OTA。
 - 原厂 bootloader 的 SHA-256 警告不可消除，除非替换 bootloader；
   目前它选择继续启动，OTA 已实测可用。
-- WiFi 凭据会编译进固件；`firmware/include/secrets.h` 已在 `.gitignore` 中。
+- `secrets.h` 里的 WiFi 凭据仍会编译进固件，但只用于首次播种；运行时以 NVS 为准。
+  `firmware/include/secrets.h` 已在 `.gitignore` 中，不会提交。
+- 如果希望固件完全不包含 WiFi 密码，可以清空 `WIFI_SSID` / `WIFI_PASSWORD`，
+  首次启动后用串口 `wifi <ssid> <password>` 配网。
 - 如果后续固件需要显示，使用 GC9A01 + 已确认的 SPI 引脚：
   CLK 14、MOSI 13、CS 12、DC/RS 11、RST 45、BLK 18、TE 17。

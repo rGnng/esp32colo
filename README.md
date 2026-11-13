@@ -6,7 +6,7 @@ The initial [firmware feasibility report](cololight-firmware-report.html) covers
 
 The physical unit matches the published design: **ESP32-S3-WROOM-1-N16R8**, **GC9A01** 240×240 round LCD, and **ES8311** audio codec. A full 16 MB factory backup was taken before any writes.
 
-A minimal WiFi/OTA bring-up firmware is flashed and OTA-verified (`0.1.1-ota`). Display, audio and input drivers are not implemented yet.
+A minimal WiFi/OTA bring-up firmware is flashed and OTA-verified (`0.1.3-nvs`). WiFi credentials are stored in NVS (seeded from `secrets.h` on first boot) and can be changed over HTTP or the USB serial console. Display, audio and input drivers are not implemented yet.
 
 An experimental [LCD probe](firmware/lcd_probe/README.md) can still be loaded from RAM through the ROM downloader for controller experiments, without overwriting factory flash.
 
