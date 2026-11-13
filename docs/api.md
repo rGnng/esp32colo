@@ -86,16 +86,17 @@ web interface no longer requests display images.
 gesture/action/effect `catalog`, and `scenes`. Each scene has a stable numeric
 `id`, `name`, `protected`, `standby_screen`, `ring_mode`, `ring_color`,
 `keys_mode`, `keys_color`, and sparse `bindings` list. Each
-binding contains `input`, `gesture` and an ordered `actions` array. NVS stores
-one version-2, 2920-byte record: 8 scenes, 64 configured gestures and up to 3
+binding contains `input`, `gesture`, `global` and an ordered `actions` array. NVS stores
+one version-3, 3304-byte record: 8 scenes, 64 configured gestures and up to 3
 actions per gesture. The active scene is persistent.
 
 Ring and key LED modes independently accept `general`, `rainbow` or `static`;
 colors use `#RRGGBB`. `catalog.lighting_modes` lists these choices. Omitted
 lighting fields retain their saved values, including during rename requests.
-`state` and `/api/status.scene` include the active scene's same lighting fields.
-Brightness/Auto remain General settings; action LED feedback overlays scene
-lighting, then expires back to it. Legacy v1 scenes migrate with both groups in
+`state` and `/api/status.scene` include the active scene's same lighting and icon fields.
+`hardware.display.scene_overlay` is true while the switch icon/name is displayed.
+Brightness/Auto can inherit General or be overridden per scene; action LED
+feedback overlays scene lighting, then expires back to it. Legacy v1 scenes migrate with both groups in
 `general`, retaining all names, IDs, bindings and the active selection.
 
 `POST /api/scenes` uses these form operations:
@@ -103,17 +104,41 @@ lighting, then expires back to it. Legacy v1 scenes migrate with both groups in
 | `op` | Fields | Result |
 |---|---|---|
 | `create` | `name` | Create an empty scene in a free slot |
-| `update` | `scene_id`, `name`, optional `standby_screen=clock`, `ring_mode`, `ring_color`, `keys_mode`, `keys_color` | Save scene settings atomically |
+| `update` | `scene_id`, `name`, optional screen/color, `icon` and brightness fields below | Save scene settings atomically |
 | `delete` | `scene_id` | Delete; active/scene-switch targets fall back to Default |
 | `activate` | `scene_id` | Persist active selection and clear pending input/effects |
-| `binding` | `scene_id`, `input`, `gesture`, `count`, action fields below | Atomically replace the complete ordered binding; count 0 clears |
+| `binding` | `scene_id`, `input`, `gesture`, `count`, optional `global=0/1`, action fields below | Atomically replace the complete ordered binding; count 0 clears |
 | `run` | `scene_id`, `input`, `gesture` | Execute the saved binding in the active scene; requires hardware ready |
 
 Scene 0 is protected: it must exist, remains named **Default**, and cannot be
 deleted. Names are distinct, nonempty, at most 24 UTF-8 bytes, with no control
-characters. New scenes are unassigned, without inherited Default bindings.
+characters. New scenes have no local bindings; marked Global Default bindings
+remain available.
 Deleting a scene clears its bindings and retargets references to scene 0 before
 saving. Invalid requests or NVS write failures do not apply a partial update.
+
+Additional scene fields are `icon` (one of `catalog.icons[].id`) and, for each
+`screen`, `ring`, `keys` channel: `<channel>_brightness_mode=general|override`,
+`<channel>_brightness` (0–100), `auto_<channel>` (form 0/1; JSON boolean).
+Omitted fields are retained. Icon names are fixed to the 32 locally bundled
+Bootstrap choices. Brightness actions update the enabled scene override or the
+General setting; override actions debounce storage for 1.5 seconds. `state.revision`
+changes for brightness edits without cancelling gestures; `state.epoch` changes
+for configuration/scene switches. Polling clients should observe both.
+
+Combination input strings are canonical `key1+key2`, `key1+key3+key4`, etc.,
+using 2–4 distinct front buttons. Input order is accepted in either direction;
+responses use button order. Knob/OPEN/REC combinations and rotation gestures on
+combinations are rejected. `catalog.combo_inputs` lists supported members and
+`timing.combo_window_ms` is 80. There is no GPIO-injection endpoint; `op=run`
+dispatches a saved logical gesture without testing physical recognition.
+
+`global=1` is allowed only for scene 0. Lookup first checks the active scene,
+then Global Default. `last_event.source_scene` and `last_event.global` identify
+the resolved binding. Global and local bindings count toward the same 64-row
+limit; each scene may override a Global pair. The web editor warns rather than
+rejecting that deliberate shadowing. Legacy v1/v2 records migrate with preserved
+settings, Use General brightness, House icons and Global off.
 
 For table editing, `binding` also accepts optional `source_input` and
 `source_gesture`. These identify an existing row to move/replace atomically;

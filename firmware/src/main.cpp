@@ -27,7 +27,7 @@ constexpr const char *kHostname = "coloplay";
 #ifdef COLOPLAY_USB_CONCURRENCY_TEST
 constexpr const char *kFirmwareVersion = "0.4.1-usb-concurrency-test";
 #else
-constexpr const char *kFirmwareVersion = "0.4.6-readable-ui";
+constexpr const char *kFirmwareVersion = "0.5.1-wifi-dialog";
 #endif
 constexpr const char *kPrefsNamespace = "wifi";
 constexpr uint32_t kWifiRetryMs = 10000;
@@ -496,6 +496,7 @@ void loop() {
   UsbNetwork::experimentTick();
 #endif
   ClockService::tick();
+  if(!gArduinoOtaBusy&&!HttpOta::busy())SceneService::tick();
   pollSerial();
   if (!gArduinoOtaBusy && !HttpOta::busy()) {
     if (!gHardwareStarted && !gRecoveryMode &&

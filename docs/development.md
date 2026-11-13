@@ -49,7 +49,7 @@ recovery guard described in [Flashing](flash.md#recovery).
 | `clock` | Versioned `settings` blob, 804 bytes (v2; migrates 296-byte v1) | Three NTP servers and supported zone committed together; apply and sync immediately |
 | `lighting` | Versioned `settings` blob, 44 bytes | Independent levels/Auto flags, mode/color and calibration; web saves before apply; knob writes debounced 1.5 s |
 | `usbnet` | Versioned `settings` blob, 12 bytes | Mode, prefix, device/host addresses saved together; restart to apply |
-| `scenes` | Version-2 `settings` blob, 2920 bytes | 8 scenes, 64 sparse gesture bindings, 3 actions each; active selection committed with config |
+| `scenes` | Version-3 `settings` blob, 3304 bytes | 8 scenes, 64 sparse gesture bindings, 3 actions each; active selection committed with config |
 | `demo` | Image MD5 and failed-start attempts | Recovery state, not user configuration |
 
 Invalid/missing settings blobs use their declared defaults. Normal OTA preserves
@@ -356,3 +356,56 @@ checks confirmed the computed text sizes, overflow-free General/Scenes/Device
 layouts from 320 to 1440 px, and stable panel positions during status changes.
 No JavaScript errors were observed. The device passed boot confirmation with
 scene definitions, active selection, lighting and clock settings preserved.
+
+## Scene combinations, overrides, icons and Global bindings (0.5.0)
+
+The v3 record is 3304 bytes, adding per-channel brightness/Auto overrides,
+scene icons and a Default-only Global flag per binding. Separate v1/v2 structs
+validate/migrate old records; one legacy scratch union avoids retaining two
+copies. Existing settings retain their behavior. Combination IDs use an encoded
+four-button mask while keeping physical input IDs and recovery controls intact.
+
+ChordEngine wraps the existing single-input recognizer with an 80 ms bounded
+assembly window, exact groups, consumed-member suppression and per-group click
+state. It cancels on scene/binding changes, handles boot-held inputs, timer wrap,
+release order and pending click sequences, and leaves knob gestures unchanged.
+The active/global combination mask is rebuilt only on configuration changes.
+Tests cover fallback, overlapping pairs/triples, holds and multi-click timing.
+
+Global lookup prefers the current scene, then marked Default bindings. Custom
+scene editors show a nonblocking warning for a matching Global pair. Brightness
+resolves per channel from General or saved scene override. Override adjustment
+actions increment a separate UI revision, preserving ordered actions and held
+inputs; saves debounce for 1.5 seconds. Configuration commits flush pending
+levels atomically. The original global lighting record is unchanged.
+
+32 common Bootstrap Icons 1.13.1 SVGs (MIT) are vendored with their license.
+There is no official usage ranking claimed. A local SVG sprite serves the web
+picker; host-generated 64×64 monochrome bitmaps use 16 KiB flash for the display.
+The application renders icon/name for 1600 ms only when the scene ID changes,
+then resumes the unchanged clock. No screen capture endpoint is restored.
+
+Live OTA MD5 `070c513701b27f82f71d8d85fa7c99bf` verified v2 migration, separate
+channel output, Use General restoration, ordered local brightness adjustments,
+Global fallback/local precedence and invalid-input rejection. New scene icon,
+levels, bindings, flags and active selection survived a reboot. The test scene
+was removed and the previous active scene restored. A Global 1+2 Single → Next
+scene example remains for the user's physical test; GPIO timing was tested in
+the host recognizer, not injected into the physical unit. Overlay telemetry
+and continuing display frames were verified; appearance needs observation.
+
+## WiFi summary and SSID editor (0.5.1)
+
+WiFi shows SSID, connection status, RSSI and IP via the existing status poll.
+Disconnected/unreachable states clear RSSI/IP. Credentials move into a native
+modal opened by Edit and restart; Save and restart keeps the existing WiFi API.
+SSID is used consistently in the UI. Cancel/Escape clear the password draft and
+send no request; duplicate submissions are blocked, and failed saves keep the
+editor open. Dialog checks used a mocked POST, preserving actual credentials.
+Both firmware environments build; the production application uses 85100 bytes
+static RAM and is 1103424 bytes. Assets remain locally compressed and cached.
+
+OTA verified running MD5 `eb178aacaded1d88aa4f8a1d9d8131dc`. Live SSID/status/
+RSSI/IP and modal open/cancel checks passed from 320 to 1440 px without JavaScript
+errors or configuration writes. Scene/global settings and WiFi SSID matched the
+pre-update snapshot, and the device passed boot confirmation.

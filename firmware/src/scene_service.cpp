@@ -1,15 +1,19 @@
 #include "scene_service.h"
 #include <Preferences.h>
 #include <cstdlib>
+#include <new>
+#include "scene_icons.h"
 
 namespace SceneService {
 namespace {
 using namespace SceneSettings;
 Stored gSettings, gCandidate;
 Preferences gPrefs;
-bool gOpen=false, gStored=false;
+bool gOpen=false, gStored=false,gLevelDirty=false;
+uint32_t gLevelChangedAt=0,gRevision=1;
 Handler gHandler=nullptr;
 uint32_t gEpoch=1, gSequence=0, gAt=0;
+int gSource=-1;bool gWasGlobal=false;
 int gInput=-1, gGesture=-1, gLastType=0, gPercent=-1;
 String gError;
 ActionFeedback gFeedback;
@@ -23,12 +27,40 @@ String quote(const char *value) {
 }
 String color(uint32_t rgb) { char value[8]; snprintf(value,sizeof(value),"#%06lx",static_cast<unsigned long>(rgb)); return quote(value); }
 String sceneLighting(const Scene &scene) {
-  return ",\"ring_mode\":"+quote(kLightingModes[scene.ring.mode])+",\"ring_color\":"+color(scene.ring.color)+
-    ",\"keys_mode\":"+quote(kLightingModes[scene.keys.mode])+",\"keys_color\":"+color(scene.keys.color);
+  String out=",\"ring_mode\":"+quote(kLightingModes[scene.ring.mode])+",\"ring_color\":"+color(scene.ring.color)+
+    ",\"keys_mode\":"+quote(kLightingModes[scene.keys.mode])+",\"keys_color\":"+color(scene.keys.color)+",\"icon\":"+quote(SceneIcons::kNames[scene.icon]);
+  const char *names[]={"screen","ring","keys"};
+  for(int i=0;i<3;++i) {
+    const String channel=names[i];const auto &level=scene.levels[i];
+    out+=",\""+channel+"_brightness_mode\":"+quote(level.overrideGeneral?"override":"general");
+    out+=",\""+channel+"_brightness\":"+String(level.percent);
+    out+=",\"auto_"+channel+"\":"+String(level.automatic?"true":"false");
+  }
+  return out;
 }
 int index(const String &value, const char *const *list, int count) {
   for (int i=0;i<count;++i) if (value==list[i]) return i;
   return -1;
+}
+String inputName(int input) {
+  const int mask=comboMask(input);
+  if(!mask)return String(kInputs[input]);
+  String out;
+  for(int i=0;i<4;++i)if(mask&(1u<<i)){if(out.length())out+='+';out+=kInputs[i];}
+  return out;
+}
+int readInput(const String &value) {
+  const int physical=index(value,kInputs,kInputCount);
+  if(physical>=0)return physical;
+  int mask=0,at=0;
+  while(at<int(value.length())) {
+    int end=value.indexOf('+',at);if(end<0)end=value.length();
+    const int key=index(value.substring(at,end),kInputs,4);
+    if(key<0||(mask&(1u<<key)))return -1;
+    mask|=1u<<key;at=end+1;
+    if(end==int(value.length())-1)return -1;
+  }
+  return comboMask(kComboFlag|mask)?kComboFlag|mask:-1;
 }
 bool number(WebServer &server,const char *name,int low,int high,int &out,String &error,bool required=false) {
   if (!server.hasArg(name)) { if (!required) return true; error=String(name)+" is required"; return false; }
@@ -52,11 +84,11 @@ bool readColor(const String &value,uint32_t &out) {
 }
 bool commit(String &error) {
   if (!valid(gCandidate)) { error="invalid scene, action or effect configuration"; return false; }
-  if (!std::memcmp(&gSettings,&gCandidate,sizeof(gSettings))) return true;
+  if (!std::memcmp(&gSettings,&gCandidate,sizeof(gSettings))&&!gLevelDirty) return true;
   if (!gOpen||gPrefs.putBytes("settings",&gCandidate,sizeof(gCandidate))!=sizeof(gCandidate)) {
     error="could not save scenes to NVS"; return false;
   }
-  gSettings=gCandidate; gStored=true; ++gEpoch; gFeedback.clear(); return true;
+  gSettings=gCandidate; gStored=true;gLevelDirty=false;++gRevision; ++gEpoch; gFeedback.clear(); return true;
 }
 bool activate(int id) {
   if (!exists(gSettings,id)) return false;
@@ -70,23 +102,44 @@ String list(const char *const *names,int count) {
 
 void begin(Handler handler) {
   gHandler=handler; gOpen=gPrefs.begin("scenes",false);
-  if (gOpen && gPrefs.getBytesLength("settings")==sizeof(gSettings) &&
-      gPrefs.getBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings) && valid(gSettings)) {
-    gStored=true; return;
+  const size_t bytes=gOpen?gPrefs.getBytesLength("settings"):0;
+  if(bytes==sizeof(gSettings)&&gPrefs.getBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings)&&valid(gSettings)){gStored=true;return;}
+  // The two legacy layouts share one scratch area, avoiding permanent duplication.
+  union Legacy { StoredV1 v1;StoredV2 v2;Legacy():v2(){} };
+  static Legacy legacy;
+  bool migrated=false;
+  if(bytes==sizeof(StoredV2)) {
+    new (&legacy.v2) StoredV2;
+    migrated=gPrefs.getBytes("settings",&legacy.v2,sizeof(legacy.v2))==sizeof(legacy.v2)&&migrateV2(legacy.v2,gSettings);
+  } else if(bytes==sizeof(StoredV1)) {
+    new (&legacy.v1) StoredV1;
+    migrated=gPrefs.getBytes("settings",&legacy.v1,sizeof(legacy.v1))==sizeof(legacy.v1)&&migrate(legacy.v1,gSettings);
   }
-  // Static scratch avoids putting both old and new scene records on the
-  // setup task stack during migration. Preserve all scene IDs and bindings.
-  static StoredV1 legacy;
-  if (gOpen && gPrefs.getBytesLength("settings")==sizeof(legacy) &&
-      gPrefs.getBytes("settings",&legacy,sizeof(legacy))==sizeof(legacy) && migrate(legacy,gSettings)) {
-    gStored=gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);
-    if (!gStored) gError="could not persist migrated scenes";
-    return;
-  }
+  if(migrated){gStored=gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);if(!gStored)gError="could not persist migrated scenes";return;}
+
   gSettings=defaults();
   gStored=gOpen&&gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);
 }
 uint32_t epoch() { return gEpoch; }
+uint8_t activeScene(){return gSettings.active;}
+uint8_t icon(){return gSettings.scenes[gSettings.active].icon;}
+const char *name(){return gSettings.scenes[gSettings.active].name;}
+SceneSettings::Level brightness(int channel){return gSettings.scenes[gSettings.active].levels[channel];}
+int adjustBrightness(int channel,int value,bool relative) {
+  auto &level=gSettings.scenes[gSettings.active].levels[channel];
+  if(!level.overrideGeneral)return -1;
+  int next=relative?int(level.percent)+value:value;if(next<0)next=0;if(next>100)next=100;
+  if(next!=level.percent){level.percent=next;gLevelDirty=true;gStored=false;gLevelChangedAt=millis();++gRevision;}
+  return next;
+}
+void tick(){if(gLevelDirty&&uint32_t(millis()-gLevelChangedAt)>=1500){gStored=gOpen&&gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);gLevelDirty=!gStored;gLevelChangedAt=millis();if(!gStored)gError="could not save scene brightness";}}
+uint16_t combinations() {
+  uint16_t flags=0;
+  for(const auto &binding:gSettings.bindings)if(binding.count&&(binding.scene==gSettings.active||(binding.scene==0&&binding.global))) {
+    const int mask=comboMask(binding.input);if(mask)flags|=1u<<mask;
+  }
+  return flags;
+}
 Feedback feedback() { return gFeedback.snapshot(millis()); }
 SceneSettings::Light lighting(bool ring) {
   const auto &scene=gSettings.scenes[gSettings.active];
@@ -101,9 +154,11 @@ String statusJson() {
   String out="{\"active\":"+String(gSettings.active)+",\"name\":"+quote(gSettings.scenes[gSettings.active].name);
   out+=",\"standby_screen\":\"clock\",\"screen\":\"clock\",\"stored\":"+String(gStored?"true":"false");
   out+=sceneLighting(gSettings.scenes[gSettings.active]);
+  out+=",\"revision\":"+String(gRevision);
   out+=",\"epoch\":"+String(gEpoch)+",\"last_event\":{\"sequence\":"+String(gSequence)+",\"at_ms\":"+String(gAt);
-  out+=",\"input\":"+(gInput<0?String("null"):quote(kInputs[gInput]));
+  out+=",\"input\":"+(gInput<0?String("null"):quote(inputName(gInput).c_str()));
   out+=",\"gesture\":"+(gGesture<0?String("null"):quote(kGestures[gGesture]));
+  out+=",\"source_scene\":"+(gSource<0?String("null"):String(gSource))+",\"global\":"+String(gWasGlobal?"true":"false");
   out+=",\"action\":"+quote(kTypes[gLastType])+",\"percent\":"+String(gPercent)+"}";
   out+=",\"feedback\":{\"active\":"+String(f.active?"true":"false")+",\"led\":"+quote(kLeds[f.led]);
   out+=",\"percent\":"+String(f.percent)+",\"color\":"+color(f.color)+"},\"error\":"+quote(gError.c_str())+"}";
@@ -112,9 +167,11 @@ String statusJson() {
 String configJson() {
   String out; out.reserve(8000);
   out="{\"state\":"+statusJson()+",\"limits\":{\"scenes\":8,\"bindings\":64,\"actions_per_gesture\":3}";
-  out+=",\"timing\":{\"debounce_ms\":25,\"click_window_ms\":300,\"hold_ms\":600}";
-  out+=",\"catalog\":{\"inputs\":"+list(kInputs,kInputCount)+",\"gestures\":"+list(kGestures,kGestureCount);
-  out+=",\"actions\":"+list(kTypes,kTypeCount)+",\"led_effects\":"+list(kLeds,kLedCount)+",\"screen_effects\":"+list(kScreens,kScreenCount)+",\"lighting_modes\":"+list(kLightingModes,kLightingModeCount)+"},\"scenes\":[";
+  out+=",\"timing\":{\"debounce_ms\":25,\"click_window_ms\":300,\"hold_ms\":600,\"combo_window_ms\":80}";
+  out+=",\"catalog\":{\"inputs\":"+list(kInputs,kInputCount)+",\"combo_inputs\":"+list(kInputs,4)+",\"gestures\":"+list(kGestures,kGestureCount);
+  out+=",\"actions\":"+list(kTypes,kTypeCount)+",\"led_effects\":"+list(kLeds,kLedCount)+",\"screen_effects\":"+list(kScreens,kScreenCount)+",\"lighting_modes\":"+list(kLightingModes,kLightingModeCount)+",\"icons\":[";
+  for(int i=0;i<SceneIcons::kCount;++i){if(i)out+=',';out+="{\"id\":"+quote(SceneIcons::kNames[i])+",\"label\":"+quote(SceneIcons::kLabels[i])+"}";}
+  out+="]},\"scenes\":[";
   bool first=true;
   for (int i=0;i<kSceneCount;++i) {
     if (!exists(gSettings,i)) continue;
@@ -124,7 +181,7 @@ String configJson() {
     for (const auto &b:gSettings.bindings) {
       if (!b.count||b.scene!=i) continue;
       if (!firstBinding) out+=','; firstBinding=false;
-      out+="{\"input\":"+quote(kInputs[b.input])+",\"gesture\":"+quote(kGestures[b.gesture])+",\"actions\":[";
+      out+="{\"input\":"+quote(inputName(b.input).c_str())+",\"gesture\":"+quote(kGestures[b.gesture])+",\"global\":"+String(b.global?"true":"false")+",\"actions\":[";
       for (int n=0;n<b.count;++n) {
         if (n) out+=','; const auto &a=b.actions[n];
         out+="{\"type\":"+quote(kTypes[a.type])+",\"value\":"+String(a.value)+",\"target\":"+String(a.target);
@@ -156,6 +213,22 @@ bool configure(WebServer &server,String &error) {
     }
     name.toCharArray(gCandidate.scenes[id].name,25);
     if (server.hasArg("standby_screen")&&server.arg("standby_screen")!="clock") { error="Clock is the available screen behavior"; return false; }
+    if(server.hasArg("icon")) {
+      const int icon=index(server.arg("icon"),SceneIcons::kNames,SceneIcons::kCount);
+      if(icon<0){error="unknown scene icon";return false;}gCandidate.scenes[id].icon=icon;
+    }
+    const char *channels[]={"screen","ring","keys"};
+    for(int channel=0;channel<3;++channel) {
+      const String name=channels[channel];auto &level=gCandidate.scenes[id].levels[channel];
+      if(server.hasArg(name+"_brightness_mode")) {
+        const String mode=server.arg(name+"_brightness_mode");
+        if(mode!="general"&&mode!="override"){error="brightness mode must be general or override";return false;}
+        level.overrideGeneral=mode=="override";
+      }
+      int percent=level.percent,automatic=level.automatic;
+      if(!number(server,(name+"_brightness").c_str(),0,100,percent,error)||!number(server,("auto_"+name).c_str(),0,1,automatic,error))return false;
+      level.percent=percent;level.automatic=automatic;
+    }
     for (int channel=0;channel<2;++channel) {
       auto &light=channel==0?gCandidate.scenes[id].ring:gCandidate.scenes[id].keys;
       const String prefix=channel==0?"ring_":"keys_";
@@ -173,16 +246,18 @@ bool configure(WebServer &server,String &error) {
   } else if (op=="activate") {
     gCandidate.active=id;
   } else if (op=="run") {
-    const int input=index(server.arg("input"),kInputs,kInputCount), gesture=index(server.arg("gesture"),kGestures,kGestureCount);
-    if (id!=gSettings.active||input<0||gesture<0||(input!=kKnob&&gesture>=kLeft)) { error="run a valid gesture in the active scene"; return false; }
+    const int input=readInput(server.arg("input")), gesture=index(server.arg("gesture"),kGestures,kGestureCount);
+    if (id!=gSettings.active||!validGesture(input,gesture)) { error="run a valid gesture in the active scene"; return false; }
     event(input,gesture); return true;
   } else if (op=="binding") {
     Binding b; b.scene=id;
-    const int input=index(server.arg("input"),kInputs,kInputCount), gesture=index(server.arg("gesture"),kGestures,kGestureCount);
+    const int input=readInput(server.arg("input")), gesture=index(server.arg("gesture"),kGestures,kGestureCount);
     int count=0;
-    if (input<0||gesture<0||(input!=kKnob&&gesture>=kLeft)) { error="invalid input or gesture"; return false; }
+    if (!validGesture(input,gesture)) { error="invalid input or gesture"; return false; }
     if (!number(server,"count",0,kActionCount,count,error,true)) return false;
     b.input=input; b.gesture=gesture; b.count=count;
+    int global=0;if(!number(server,"global",0,1,global,error))return false;
+    if(global&&id!=0){error="only Default bindings can be Global";return false;}b.global=global;
     for (int i=0;i<count;++i) {
       const String prefix="a"+String(i)+"_";
       auto &a=b.actions[i];
@@ -201,9 +276,9 @@ bool configure(WebServer &server,String &error) {
     }
     int sourceInput=-1,sourceGesture=-1,createOnly=0;
     if (server.hasArg("source_input") || server.hasArg("source_gesture")) {
-      sourceInput=index(server.arg("source_input"),kInputs,kInputCount);
+      sourceInput=readInput(server.arg("source_input"));
       sourceGesture=index(server.arg("source_gesture"),kGestures,kGestureCount);
-      if (sourceInput<0||sourceGesture<0||(sourceInput!=kKnob&&sourceGesture>=kLeft)) {
+      if (!validGesture(sourceInput,sourceGesture)) {
         error="invalid source binding"; return false;
       }
     }
@@ -218,11 +293,11 @@ bool configure(WebServer &server,String &error) {
   return commit(error);
 }
 void event(int input,int gesture,int repetitions) {
-  if (input<0||input>=kInputCount||gesture<0||gesture>=kGestureCount) return;
-  gInput=input; gGesture=gesture; gAt=millis(); ++gSequence; gLastType=kNone; gPercent=-1; gError="";
-  auto *found=binding(gSettings,gSettings.active,input,gesture);
+  if (!validGesture(input,gesture)) return;
+  gInput=input; gGesture=gesture; gAt=millis(); ++gSequence; gLastType=kNone; gPercent=-1; gError="";gSource=-1;gWasGlobal=false;
+  const auto *found=effectiveBinding(gSettings,gSettings.active,input,gesture);
   if (!found) return;
-  const Binding b=*found;
+  const Binding b=*found;gSource=b.scene;gWasGlobal=b.global;
   const auto previousEpoch=gEpoch;
   for (int i=0;i<b.count;++i) {
     const Action a=b.actions[i]; gLastType=a.type;

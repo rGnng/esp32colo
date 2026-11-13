@@ -9,7 +9,8 @@
 #include "inter_clock_fonts.h"
 #include "lighting_settings.h"
 #include "scene_service.h"
-#include "gesture_engine.h"
+#include "chord_engine.h"
+#include "scene_icons.h"
 
 #include <Adafruit_NeoPixel.h>
 #include <TFT_eSPI.h>
@@ -61,13 +62,15 @@ bool gLightingPrefsOpen = false, gLightingStored = false;
 bool gLightingDirty = false, gHaveLight = false, gLightUsable = false;
 uint32_t gLightingChangedAt = 0, gLastLightAt = 0;
 float gFilteredLight = 0, gAutoFactor = 1;
+uint8_t gSceneShown=0;
+uint32_t gSceneOverlayUntil=0;
 int gScreenLevel = 70, gRingLevel = 70, gKeysLevel = 70;
 int gLedTest = 0;
 uint32_t gLedTestUntil = 0;
 int32_t gEncoderEdges = 0, gKnobPosition = 0;
 int16_t gLastEncoder = 0;
 RotaryDetents gDetents;
-GestureEngine gGestures;
+ChordEngine gGestures;
 uint32_t gSceneEpoch = 0;
 uint32_t gLastPage = 0, gLastFrame = 0, gFrames = 0, gLastSensors = 0;
 uint32_t gLastMetrics = 0, gPreviousFrames = 0, gPreviousTe = 0;
@@ -107,9 +110,12 @@ void updateBrightness() {
   gLightUsable = gHaveLight && uint32_t(millis() - gLastLightAt) <= 5000;
   gAutoFactor = gLightUsable ? LightingSettings::factor(
       gFilteredLight, gLighting.darkRaw, gLighting.brightRaw) : 1;
-  gScreenLevel = LightingSettings::level(gLighting.screen, gLighting.autoScreen, gLightUsable, gAutoFactor);
-  gRingLevel = LightingSettings::level(gLighting.ring, gLighting.autoRing, gLightUsable, gAutoFactor);
-  gKeysLevel = LightingSettings::level(gLighting.keys, gLighting.autoKeys, gLightUsable, gAutoFactor);
+  const auto screen=SceneSettings::resolvedLevel(SceneService::brightness(0),gLighting.screen,gLighting.autoScreen);
+  const auto ring=SceneSettings::resolvedLevel(SceneService::brightness(1),gLighting.ring,gLighting.autoRing);
+  const auto keys=SceneSettings::resolvedLevel(SceneService::brightness(2),gLighting.keys,gLighting.autoKeys);
+  gScreenLevel = LightingSettings::level(screen.percent, screen.automatic, gLightUsable, gAutoFactor);
+  gRingLevel = LightingSettings::level(ring.percent, ring.automatic, gLightUsable, gAutoFactor);
+  gKeysLevel = LightingSettings::level(keys.percent, keys.automatic, gLightUsable, gAutoFactor);
   setBacklight();
 }
 
@@ -210,8 +216,9 @@ void setupEncoder() {
 
 void pollInputs(uint32_t now) {
   if (gSceneEpoch != SceneService::epoch()) {
-    gSceneEpoch = SceneService::epoch(); gGestures.cancel();
-    gAwake = true; setBacklight();
+    gSceneEpoch = SceneService::epoch(); gGestures.configure(SceneService::combinations());
+    gAwake = true; updateBrightness();
+    if(gSceneShown!=SceneService::activeScene()){gSceneShown=SceneService::activeScene();gSceneOverlayUntil=now+1600;gLastFrame=now-200;}
   }
   int32_t delta = 0;
   if (gEncoder) {
@@ -241,8 +248,10 @@ void pollInputs(uint32_t now) {
   for (int i=0;i<count;++i) {
     SceneService::event(events[i].input,events[i].gesture,events[i].repeat);
     if (gSceneEpoch!=SceneService::epoch()) {
-      gSceneEpoch=SceneService::epoch(); gGestures.cancel();
-      gAwake=true; setBacklight(); break;
+      gSceneEpoch=SceneService::epoch(); gGestures.configure(SceneService::combinations());
+      gAwake=true;updateBrightness();
+      if(gSceneShown!=SceneService::activeScene()){gSceneShown=SceneService::activeScene();gSceneOverlayUntil=now+1600;gLastFrame=now-200;}
+      break;
     }
   }
 }
@@ -259,10 +268,16 @@ void drawClock() {
   gCanvas.unloadFont();
 }
 
-void render(uint32_t) {
+void render(uint32_t now) {
   if (!gDisplay || !gAwake) return;
   gCanvas.fillSprite(kBackground);
-  switch (SceneService::screen()) {
+  if(gSceneOverlayUntil&&static_cast<int32_t>(gSceneOverlayUntil-now)>0) {
+    gCanvas.drawXBitmap(88,60,SceneIcons::kBitmaps[SceneService::icon()],64,64,TFT_WHITE);
+    const String name=SceneService::name();
+    const int font=gCanvas.textWidth(name,4)>200?2:4;
+    gCanvas.setTextColor(TFT_WHITE,kBackground);gCanvas.setTextDatum(MC_DATUM);
+    gCanvas.drawString(name,120,157,font);
+  } else switch (SceneService::screen()) {
     case SceneSettings::kClock: drawClock(); break;
     default: break;
   }
@@ -321,14 +336,16 @@ bool argument(WebServer &server, const char *name, int low, int high,
 int applyAction(const SceneSettings::Action &a, int repetitions) {
   using namespace SceneSettings;
   int result=-1; bool lightingChanged=false;
-  auto level = [&](uint32_t &field, bool change) {
+  auto level = [&](uint32_t &field, bool change,int channel) {
+    const int local=SceneService::adjustBrightness(channel,change?int(a.value)*repetitions:a.value,change);
+    if(local>=0){result=local;return;}
     field=constrain(change?int(field)+int(a.value)*repetitions:int(a.value),0,100);
     result=field; lightingChanged=true;
   };
   switch (a.type) {
-    case kScreenChange: case kScreenSet: level(gLighting.screen,a.type==kScreenChange); break;
-    case kRingChange: case kRingSet: level(gLighting.ring,a.type==kRingChange); break;
-    case kKeysChange: case kKeysSet: level(gLighting.keys,a.type==kKeysChange); break;
+    case kScreenChange: case kScreenSet: level(gLighting.screen,a.type==kScreenChange,0); break;
+    case kRingChange: case kRingSet: level(gLighting.ring,a.type==kRingChange,1); break;
+    case kKeysChange: case kKeysSet: level(gLighting.keys,a.type==kKeysChange,2); break;
     case kVolumeChange: case kVolumeSet:
       AudioDemo::setVolume(a.type==kVolumeChange?AudioDemo::snapshot().volume+a.value*repetitions:a.value);
       result=AudioDemo::snapshot().volume; break;
@@ -360,7 +377,8 @@ void begin() {
   }
   bool initial[SceneSettings::kInputCount];
   for (int i=0;i<SceneSettings::kInputCount;++i) initial[i]=gKeys[i].pressed;
-  gGestures.seed(initial,millis()); gSceneEpoch=SceneService::epoch();
+  gSceneShown=SceneService::activeScene();gSceneOverlayUntil=0;
+  gGestures.seed(initial,millis()); gGestures.configure(SceneService::combinations()); gSceneEpoch=SceneService::epoch();
   pinMode(Board::kCharge, INPUT_PULLUP);
   setStage(kLedPower);
   pinMode(Board::kLedPowerEnable, OUTPUT);
@@ -471,6 +489,7 @@ String statusJson() {
   json += ",\"awake\":" + String(gAwake ? "true" : "false");
   json += ",\"paused\":" + String(gPaused ? "true" : "false");
   json += ",\"display\":{\"driver\":\"GC9A01\",\"width\":240,\"height\":240";
+  json += ",\"scene_overlay\":"+String(gSceneOverlayUntil&&static_cast<int32_t>(gSceneOverlayUntil-millis())>0?"true":"false");
   json += ",\"framebuffer_ready\":" + String(gDisplay ? "true" : "false");
   json += ",\"frames\":" + String(gFrames) + ",\"fps\":" + String(gFps, 1);
   json += ",\"te_pulses\":" + String(gTePulses) + ",\"te_hz\":" + String(gTeHz, 1);

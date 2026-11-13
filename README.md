@@ -11,7 +11,7 @@ development. The build target and default hostname remain `coloplay`.
 
 ## Current baseline
 
-Source version: **`0.4.6-readable-ui`**. Documentation consolidated on **2026-11-13**.
+Source version: **`0.5.1-wifi-dialog`**. Documentation consolidated on **2026-11-13**.
 Per-scene lighting was OTA-verified on this unit, including legacy scene
 migration, independent mode/color saves and preserved General settings.
 The working firmware provides:
@@ -24,7 +24,10 @@ The working firmware provides:
 - Compact Bootstrap dark configuration: General, Scenes and Device pages,
   served locally over WiFi or USB CDC-ECM, plus selectable USB serial/JTAG.
 - Application-only HTTP OTA and ArduinoOTA through the preserved factory bootloader.
-- Persistent scenes with customizable button/knob gestures and ordered actions.
+- Persistent scenes with customizable button/knob gestures, simultaneous button
+  combinations, Global Default bindings and ordered actions.
+- Per-scene brightness/Auto overrides and a local 32-icon picker; scene switches
+  briefly show the icon and name on the display.
   Default is protected; Clock is the first scene standby/action screen behavior.
 
 The display, speaker, ring and four key LEDs have been confirmed on the unit.

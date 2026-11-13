@@ -25,10 +25,11 @@ struct Action {
   uint16_t feedbackMs = 1500;
   uint32_t color = 0x40FFAA;
 };
-struct Binding {
+struct BindingV1 {
   uint8_t scene = 0, input = 0, gesture = 0, count = 0;
   Action actions[kActionCount];
 };
+struct Binding : BindingV1 { uint8_t global=0,reserved[3]={}; };
 enum LightingMode : uint32_t { kGeneralLighting, kSceneRainbow, kSceneStatic, kLightingModeCount };
 constexpr const char *kLightingModes[] = {"general","rainbow","static"};
 struct Light {
@@ -40,16 +41,35 @@ struct StoredV1 {
   uint32_t version = 1;
   uint8_t active = 0, reserved[3] = {};
   SceneV1 scenes[kSceneCount];
-  Binding bindings[kBindingCount];
+  BindingV1 bindings[kBindingCount];
 };
-struct Scene : SceneV1 { Light ring, keys; };
+struct SceneV2 : SceneV1 { Light ring, keys; };
+struct StoredV2 {
+  uint32_t version=2;
+  uint8_t active=0,reserved[3]={};
+  SceneV2 scenes[kSceneCount];
+  BindingV1 bindings[kBindingCount];
+};
+struct Level {
+  uint8_t overrideGeneral=0,percent=70,automatic=0,reserved=0;
+};
+struct Scene : SceneV2 { Level levels[3]; uint8_t icon=0,reserved2[3]={}; };
 struct Stored {
-  uint32_t version = 2;
+  uint32_t version = 3;
   uint8_t active = 0, reserved[3] = {};
   Scene scenes[kSceneCount];
   Binding bindings[kBindingCount];
 };
-static_assert(sizeof(Action) == 12 && sizeof(StoredV1) == 2792 && sizeof(Stored) == 2920, "scene storage layout changed");
+static_assert(sizeof(Action) == 12 && sizeof(StoredV1) == 2792 && sizeof(StoredV2)==2920 && sizeof(Stored)==3304, "scene storage layout changed");
+constexpr int kComboFlag=0x80;
+inline int comboMask(int input) {
+  const int mask=input&15;
+  return input==(kComboFlag|mask) && mask && (mask&(mask-1)) ? mask : 0;
+}
+inline bool validInput(int input) { return (input>=0&&input<kInputCount)||comboMask(input); }
+inline bool validGesture(int input,int gesture) {
+  return validInput(input)&&gesture>=0&&gesture<kGestureCount&&(input==kKnob||gesture<kLeft);
+}
 inline bool exists(const Stored &s, int id) { return id >= 0 && id < kSceneCount && s.scenes[id].used == 1; }
 inline bool percentType(int type) { return type >= kScreenChange && type <= kVolumeSet; }
 inline bool changeType(int type) { return type == kScreenChange || type == kRingChange || type == kKeysChange || type == kVolumeChange; }
@@ -72,23 +92,28 @@ inline bool validAction(const Stored &s, const Action &a) {
   if (a.type == kTone && (a.value < 100 || a.value > 4000)) return false;
   return true;
 }
+inline bool validLevel(const Level &level){return level.overrideGeneral<=1&&level.percent<=100&&level.automatic<=1;}
+inline Level resolvedLevel(const Level &scene,uint32_t general,bool automatic) {
+  if(scene.overrideGeneral)return scene;
+  Level out;out.percent=general;out.automatic=automatic;return out;
+}
 inline bool validLight(const Light &light) { return light.mode < kLightingModeCount && light.color <= 0xFFFFFF; }
 // General mode is resolved at render time, so later General changes still apply.
 inline Light resolveLighting(const Light &scene, bool generalStatic, uint32_t generalColor) {
   return scene.mode == kGeneralLighting ? Light{generalStatic ? kSceneStatic : kSceneRainbow, generalColor} : scene;
 }
 inline bool valid(const Stored &s) {
-  if (s.version != 2 || !exists(s, 0) || !exists(s, s.active) || !validName(s.scenes[0].name) || std::strcmp(s.scenes[0].name, "Default")) return false;
+  if (s.version != 3 || !exists(s, 0) || !exists(s, s.active) || !validName(s.scenes[0].name) || std::strcmp(s.scenes[0].name, "Default")) return false;
   for (int i=0;i<kSceneCount;++i) {
     const auto &scene=s.scenes[i];
     if (scene.used > 1 || (scene.used && (!validName(scene.name) || scene.screen != kClock || !validLight(scene.ring) || !validLight(scene.keys)))) return false;
+    if(scene.used){if(scene.icon>=32)return false;for(const auto &level:scene.levels)if(!validLevel(level))return false;}
     if (scene.used) for (int j=0;j<i;++j) if (s.scenes[j].used&&!std::strcmp(scene.name,s.scenes[j].name)) return false;
   }
   for (int i = 0; i < kBindingCount; ++i) {
     const auto &b = s.bindings[i];
     if (!b.count) continue;
-    if (!exists(s, b.scene) || b.input >= kInputCount || b.gesture >= kGestureCount ||
-        (b.input != kKnob && b.gesture >= kLeft) || b.count > kActionCount) return false;
+    if (!exists(s, b.scene) || b.global>1 || (b.global&&b.scene!=0) || !validGesture(b.input,b.gesture) || b.count > kActionCount) return false;
     for (int j = 0; j < b.count; ++j) if (!validAction(s, b.actions[j])) return false;
     for (int j = 0; j < i; ++j) {
       const auto &p = s.bindings[j];
@@ -103,14 +128,34 @@ inline bool migrate(const StoredV1 &old, Stored &out) {
   Stored candidate;
   candidate.active=old.active;
   for (int i=0;i<kSceneCount;++i) static_cast<SceneV1 &>(candidate.scenes[i])=old.scenes[i];
-  std::memcpy(candidate.bindings,old.bindings,sizeof(old.bindings));
+  for(int i=0;i<kBindingCount;++i){if(old.bindings[i].count&&old.bindings[i].input>=kInputCount)return false;static_cast<BindingV1 &>(candidate.bindings[i])=old.bindings[i];}
   if (!valid(candidate)) return false;
   out=candidate;
   return true;
 }
+// Upgrade the original lighting scene record without changing its saved fields.
+inline bool migrateV2(const StoredV2 &old,Stored &out) {
+  if(old.version!=2)return false;
+  Stored candidate;candidate.active=old.active;
+  for(int i=0;i<kSceneCount;++i)static_cast<SceneV2 &>(candidate.scenes[i])=old.scenes[i];
+  for(int i=0;i<kBindingCount;++i) {
+    if(old.bindings[i].count&&old.bindings[i].input>=kInputCount)return false;
+    static_cast<BindingV1 &>(candidate.bindings[i])=old.bindings[i];
+  }
+  if(!valid(candidate))return false;
+  out=candidate;return true;
+}
 inline Binding *binding(Stored &s, int scene, int input, int gesture) {
   for (auto &b : s.bindings) if (b.count && b.scene == scene && b.input == input && b.gesture == gesture) return &b;
   return nullptr;
+}
+inline const Binding *effectiveBinding(const Stored &s,int scene,int input,int gesture) {
+  const Binding *global=nullptr;
+  for(const auto &b:s.bindings)if(b.count&&b.input==input&&b.gesture==gesture) {
+    if(b.scene==scene)return &b;
+    if(b.scene==0&&b.global)global=&b;
+  }
+  return global;
 }
 inline bool assign(Stored &s, const Binding &value) {
   Binding *b = binding(s, value.scene, value.input, value.gesture);

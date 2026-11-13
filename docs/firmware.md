@@ -1,6 +1,6 @@
 # Desktop gadget guide
 
-Current baseline: **0.4.6-readable-ui**. The gadget is configured through the **General**,
+Current baseline: **0.5.1-wifi-dialog**. The gadget is configured through the **General**,
 **Scenes** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
 buttons are 14 px, with larger headings and log text. [API](api.md), [development](development.md), and
@@ -21,8 +21,10 @@ refreshes every two seconds while the page is visible and pauses in hidden tabs.
 
 ### WiFi
 
-Set network name and password, then save/restart. A blank password retains the
-stored password. Initial credentials come from `secrets.h`; subsequent boots
+The panel shows **SSID**, connection status, RSSI in dBm and the current IP.
+Click **Edit and restart** to open the SSID/password modal, then **Save and
+restart** to apply them. Cancel leaves the settings unchanged. A blank password
+retains the stored password. Initial credentials come from `secrets.h`; subsequent boots
 and OTA use the `wifi` NVS namespace. Recovery console commands are documented
 in [Flashing](flash.md#recovery).
 
@@ -82,26 +84,40 @@ The active scene is
 saved and restored at boot. Deleting the active scene returns to Default;
 saved scene-switch actions targeting a deleted scene are retargeted to Default.
 A scene switch clears pending gestures and temporary effects and wakes the screen.
+It shows the scene icon and name for about 1.6 seconds, then returns to Clock.
 
-The scene settings panel has **Idle screen**, **Ring color** and **Button
-color**, followed by the key binding table. Each LED group independently uses
+The scene settings panel has a **Scene icon** picker with 32 bundled Bootstrap
+icons, **Idle screen**, **Ring color**, **Button color**, and brightness controls
+for screen, ring and buttons, followed by the key binding table. Each LED group independently uses
 **Static color** with its own picker, **Rainbow**, or **Use General**. Click
 **Save settings** to persist the scene. Colors apply when that scene is active;
-selecting an inactive tab edits its saved configuration. Brightness and Auto
-remain independent controls in General. Temporary action effects override the
+selecting an inactive tab edits its saved configuration. Each brightness channel
+has **Use General** or **Override**. Override enables that scene's saved
+percentage and Auto checkbox; Use General follows the General percentage/Auto
+while remembering the override values. General's Now values show resolved output.
+Brightness actions adjust the active scene's override when enabled, otherwise
+the General setting; action-driven writes are debounced for 1.5 seconds. Temporary action effects override the
 scene colors and return to them when they expire. Proportional ring feedback
 leaves the button group's scene color in place.
 
-Existing v1 scenes migrate to Use General for both groups to preserve their
-appearance, names, bindings and active selection. New scenes also start with
-Use General and white as their remembered static color. The version-2 scene
-record is 2920 bytes; firmware predating 0.4.2 cannot read this format, so an
-application downgrade is not a scene-settings rollback.
+Existing v1/v2 scenes migrate without changing their names, colors, bindings or
+selection. New brightness overrides start at Use General, icons start at House,
+and existing bindings are not made Global automatically. The version-3 scene
+record is 3304 bytes; older firmware cannot read it, so an application downgrade
+is not a scene-settings rollback.
 
 Current bounded NVS storage supports **8 scenes**, **64 configured gestures**
 across all scenes, and **3 ordered actions per gesture**. Empty bindings consume
 no configured-gesture slot. New scenes start with no assigned actions; bindings
-are independent and do not inherit Default's mappings.
+are independent. Default bindings marked Global are available in every scene.
+
+### Global bindings
+
+Only Default bindings have a **Global** checkbox. A scene's own binding wins for
+the same key/combination and gesture; otherwise a Global Default binding runs.
+The editor warns **exists in Global (Default)** for matching pairs in other
+scenes and allows saving a deliberate local override. The table marks Global
+rows. Unmarked Default bindings only run while Default is active.
 
 ### Gestures
 
@@ -121,6 +137,7 @@ Available events are:
 | Control | Available gestures |
 |---|---|
 | Keys 1–4, OPEN, REC | Single, double, triple, hold, hold then release |
+| Combinations of 2–4 front buttons | Single, double, triple, hold, hold then release |
 | Center knob press | Single, double, triple, hold, hold then release |
 | Center knob rotation | Left, right, press + left, press + right |
 
@@ -130,6 +147,19 @@ fires the separate hold-release binding. Hold does not also generate a click.
 Press-and-turn consumes the knob's pending click/release; turning before the
 hold threshold also suppresses Hold. A Hold that has already fired cannot be
 undone by a later turn. Batched rotary notches multiply adjustment actions.
+
+Choose **Button combination** in the Key selector and tick at least two of
+Buttons 1–4. After debounce, buttons must join within 80 ms and overlap. The
+exact group is matched, so 1+2+3 does not fire a smaller 1+2 binding. A matched
+combination consumes its members' individual gestures until all are released.
+Hold begins 600 ms after the full group forms; hold-release waits for all
+members to release. Single/double/triple use the existing click window. When no
+combination matches, ordinary button handling continues. One combination is
+recognized at a time; unrelated buttons and knob rotation keep normal handling.
+
+On this unit, **Button 1 + Button 2 / Single press → Next scene** was added as a
+Global example for physical testing. Press together and release both to try it.
+It is an editable saved binding, not a hardcoded input action.
 
 These mappings apply while the firmware runs. KEY1 application recovery and
 REC/knob ROM-download behavior during reset remain physical recovery mechanisms.

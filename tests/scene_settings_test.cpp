@@ -75,10 +75,11 @@ int main() {
   StoredV1 legacy;
   legacy.active=7;
   for (int i=0;i<kSceneCount;++i) legacy.scenes[i]=full.scenes[i];
-  std::memcpy(legacy.bindings,full.bindings,sizeof(legacy.bindings));
+  for(int i=0;i<kBindingCount;++i)legacy.bindings[i]=full.bindings[i];
   Stored migrated;
   assert(migrate(legacy,migrated) && valid(migrated));
-  assert(migrated.active==7 && !std::memcmp(migrated.bindings,legacy.bindings,sizeof(legacy.bindings)));
+  assert(migrated.active==7);
+  for(int i=0;i<kBindingCount;++i)assert(!std::memcmp(static_cast<const BindingV1 *>(&migrated.bindings[i]),&legacy.bindings[i],sizeof(BindingV1)));
   for (int i=0;i<kSceneCount;++i) {
     assert(!std::strcmp(migrated.scenes[i].name,legacy.scenes[i].name));
     assert(migrated.scenes[i].ring.mode==kGeneralLighting && migrated.scenes[i].keys.mode==kGeneralLighting);
@@ -89,5 +90,29 @@ int main() {
   legacy.version=3;assert(!migrate(legacy,migrated));
   migrated.scenes[7].ring=Light{kSceneStatic,0xABCDEF};
   assert(remove(migrated,7) && migrated.scenes[7].ring.mode==kGeneralLighting);
+  Stored modern=defaults();modern.scenes[0].ring=Light{kSceneStatic,0x123456};
+  StoredV2 old;old.active=modern.active;
+  for(int i=0;i<kSceneCount;++i)old.scenes[i]=modern.scenes[i];
+  for(int i=0;i<kBindingCount;++i)old.bindings[i]=modern.bindings[i];
+  assert(migrateV2(old,migrated)&&valid(migrated)&&migrated.version==3);
+  assert(!std::memcmp(&modern,&migrated,sizeof(migrated)));
+  Binding combo;combo.input=kComboFlag|3;combo.gesture=kHold;combo.count=1;
+  assert(assign(migrated,combo)&&valid(migrated)&&binding(migrated,0,kComboFlag|3,kHold));
+  for(int invalid : {kComboFlag,kComboFlag|1,kComboFlag|16,255})assert(!validInput(invalid));
+  assert(!validGesture(kComboFlag|3,kLeft)&&validGesture(kComboFlag|15,kHoldRelease));
+  auto saved=migrated;old.bindings[0].input=kComboFlag|3;
+  assert(!migrateV2(old,migrated)&&!std::memcmp(&saved,&migrated,sizeof(saved)));
+  auto scoped=defaults();scoped.scenes[1].used=1;std::strcpy(scoped.scenes[1].name,"Local");
+  Binding global;global.input=kKey3;global.count=1;global.global=1;global.actions[0].type=kTone;global.actions[0].value=660;
+  assert(assign(scoped,global)&&valid(scoped));
+  assert(effectiveBinding(scoped,1,kKey3,kSingle)->scene==0);
+  auto local=global;local.scene=1;local.global=0;local.actions[0].value=880;
+  assert(assign(scoped,local)&&valid(scoped));assert(effectiveBinding(scoped,1,kKey3,kSingle)->actions[0].value==880);
+  local.global=1;assert(assign(scoped,local)&&!valid(scoped));
+  scoped=defaults();scoped.scenes[0].levels[0].overrideGeneral=1;scoped.scenes[0].levels[0].percent=25;scoped.scenes[0].levels[0].automatic=1;
+  assert(valid(scoped));assert(resolvedLevel(scoped.scenes[0].levels[0],70,false).percent==25);
+  assert(resolvedLevel(Level{},42,true).percent==42&&resolvedLevel(Level{},42,true).automatic);
+  scoped.scenes[0].levels[2].percent=101;assert(!valid(scoped));
+  scoped=defaults();scoped.scenes[0].icon=32;assert(!valid(scoped));
   std::cout<<"PASS scene defaults, protected Default, ordered actions, deletion/retargeting, corrupt records, bounded capacity, independent scene lighting and v1 migration\n";
 }

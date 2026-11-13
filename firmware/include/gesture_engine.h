@@ -20,6 +20,11 @@ class GestureEngine {
   void cancel() {
     for (auto &s : states_) { s.clicks = 0; s.blocked = s.down || s.raw; s.held = s.turned = false; }
   }
+  void suppress(uint8_t mask) {
+    for(int i=0;i<4;++i)if(mask&(1u<<i)) {
+      auto &s=states_[i];s.clicks=0;s.blocked=s.raw||s.down;s.held=s.turned=false;
+    }
+  }
   bool down(int i) const { return states_[i].down; }
   template <typename Emit> void tick(const bool *raw, int32_t detents, uint32_t now, Emit emit) {
     using namespace SceneSettings;

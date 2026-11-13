@@ -26,7 +26,7 @@ hashes in their local `/assets/` paths allow immutable browser caching while
 ensuring an OTA with changed assets gets fresh paths. The device sends bytes
 straight from flash; it does not compile, compress or decompress assets at
 runtime. There are no CDN resources, external fonts, icon packages, Bootstrap
-JavaScript, jQuery or screen-image requests. Icons are inline SVG, dialogs are
+JavaScript, jQuery or screen-image requests. Navigation icons are inline SVG; scene icons use a local sprite. Dialogs are
 native HTML, and the app uses its existing native JavaScript handlers.
 
 Only forms, buttons, navs, tables and their required Bootstrap foundation are
@@ -44,3 +44,16 @@ NVS schema. Status messages use fixed space beside the page title, including
 when empty, so saves and errors cannot shift the panels. The Device log viewer
 reads incremental chunks only while open/visible and running; its download is
 created locally in the browser.
+
+Scene icons are rebuilt only when their source selection changes:
+
+```bash
+.venv/bin/python -m pip install 'cairosvg==2.8.2'
+.venv/bin/python scripts/build_scene_icons.py
+```
+
+The normal build needs none of those rasterization tools. `scene_icons.h` and
+`scene-icons.svg` are checked-in outputs from the 32 MIT-licensed source SVGs.
+The native SSID editor uses the unchanged WiFi API. Scene controls include
+brightness overrides, icon selection, combination membership and Default-only
+Global scope. Conflict warnings intentionally allow a local Global override.
