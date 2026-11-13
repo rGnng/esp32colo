@@ -4,9 +4,11 @@ Cololight / ColoPLAY ESP32-S3 firmware exploration.
 
 The initial [firmware feasibility report](cololight-firmware-report.html) covers the published ColoPLAY V1 hardware, USB data wiring, flash-mode requirements, and the proposed build workflow. Open the HTML file locally in a browser to read it.
 
-The physical board variant remains unverified. No firmware has been run on the device.
+The physical unit matches the published design: **ESP32-S3-WROOM-1-N16R8**, **GC9A01** 240×240 round LCD, and **ES8311** audio codec. A full 16 MB factory backup was taken before any writes.
 
-An experimental [LCD probe](firmware/lcd_probe/README.md) attempts controller ID/status reads using the reference wiring. It is designed to run from RAM through the ROM downloader, without overwriting factory flash. Panel readback and exact controller identification are not guaranteed.
+A minimal WiFi/OTA bring-up firmware is flashed and OTA-verified (`0.1.1-ota`). Display, audio and input drivers are not implemented yet.
+
+An experimental [LCD probe](firmware/lcd_probe/README.md) can still be loaded from RAM through the ROM downloader for controller experiments, without overwriting factory flash.
 
 ## Working documents
 

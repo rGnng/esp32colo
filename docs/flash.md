@@ -1,93 +1,99 @@
 # ColoPLAY 刷机流程
 
-当前仓库里的 `firmware/` 是一个最小的 ESP32-S3 固件：
+当前可用的固件是 `firmware/` 下的最小 bring-up 应用：
 
 - 连接 `OnIoT` WiFi（凭据在 `firmware/include/secrets.h`）
-- 在 `http://coloplay.local/` 提供状态页
-- `http://coloplay.local/api/status` 提供 JSON
-- 支持 ArduinoOTA 无线升级
-- 读取 GPIO0 / GPIO15 / GPIO46 三个按键状态
-- **不初始化屏幕、音频等未确认外设**，适合作为第一次刷入的连通性测试
+- `http://coloplay.local/` 状态页，`/api/status` JSON
+- ArduinoOTA 无线升级
+- 读取 GPIO0 / GPIO15 / GPIO46 按键状态
+- **不初始化屏幕、音频等外设**，用于先建立 WiFi + OTA 通道
 
-## 0. 先备份出厂固件
+## 关键事实
 
-必须先把 16 MB 全片读出来，确认可恢复后再写。
+这台机器已经确认：
 
-```bash
-./scripts/backup_factory.sh
-# 或自动等待下载模式：
-.venv/bin/python scripts/wait_and_backup.py
+- ESP32-S3-WROOM-1-N16R8（16 MB flash，8 MB OPI PSRAM）
+- 屏幕控制器 **GC9A01**（240×240 圆屏）
+- 音频 codec **ES8311**
+- Secure Boot / Flash Encryption 均未启用
+- 原厂 bootloader 在 `0x0`，原厂分区表在 `0x10000`（不是常见的 `0x8000`）
+- 应用槽：`ota_app0` @ `0x20000`，`ota_app1` @ `0x4a0000`
+
+**保留原厂 bootloader**。Arduino 默认 bootloader 在这颗 flash
+（Manufacturer `0x46`）上会反复触发 WDT 重启，而原厂 bootloader 可以正常启动
+我们的应用。因此首次刷写只替换应用，不覆盖 `0x0` 和 `0x10000`。
+
+原厂 bootloader 每次启动会打印：
+
+```text
+SHA-256 comparison failed:
+...
+Attempting to boot anyway...
 ```
 
-备份文件在 `backups/coloplay-factory-*.bin`，同时生成 SHA-256。
+这是原厂 bootloader 对自身镜像头的校验警告，属于正常现象，不影响应用启动。
+
+## 0. 出厂备份
+
+备份已经在 `backups/`：
+
+```text
+backups/coloplay-factory-20261113-131459.bin
+SHA-256: 9c73cc4e389bd798a883dbcd4102ab8144b2e3744c81d004841acd0bf89ad46e
+```
 
 恢复出厂固件：
 
 ```bash
-esptool --port /dev/cu.usbmodemXXXX --baud 460800 write-flash 0 backups/coloplay-factory-XXXX.bin
+esptool --port /dev/cu.usbmodemXXXX --baud 460800 \
+  write-flash 0 backups/coloplay-factory-20261113-131459.bin
 ```
 
-> 如果备份读不出来，或者安全信息显示 Secure Boot / Flash Encryption 已启用，
-> 不要继续刷写；先停下来确认恢复路径。
-
-## 1. 进入 ROM 下载模式
-
-1. 拔掉 USB；如果设备有内部电池且拔电后仍然亮屏，先断开电池。
-2. 按住电源板 **REC_KEY**，同时按下中间 **旋钮**。
-3. 保持按住，插回 USB。
-4. 约 1 秒后松开。
-
-成功后电脑会出现 Espressif USB-JTAG 设备：
-
-```text
-USB VID:PID=303A:1001
-```
-
-对应的串口通常是 `/dev/cu.usbmodem*`。可以用以下命令确认：
-
-```bash
-python3 -m serial.tools.list_ports -v | grep -A2 303A:1001
-```
-
-## 2. 编译
+## 1. 编译
 
 ```bash
 ./scripts/build_firmware.sh
 ```
 
-脚本会编译并生成一个合并镜像 `firmware/firmware-merged.bin`（包含 bootloader、
-分区表、OTA 数据和应用程序）。
+应用产物：`firmware/.pio/build/coloplay/firmware.bin`。
 
-## 3. 刷写
+工程使用：
 
-### 方式 A：PlatformIO（推荐）
+- `board_build.arduino.memory_type = qio_opi`（N16R8 的八线 PSRAM）
+- `board_build.partitions = partitions_coloplay.csv`（与原厂分区偏移一致）
+
+## 2. 首次 USB 刷写（保留原厂 bootloader）
+
+进入 ROM 下载模式：
+
+1. 拔掉 USB；如果拔电后屏幕还亮，需要断开电池，确保 ESP32 完全断电。
+2. 按住电源板 **REC_KEY**，同时按下中间 **旋钮**。
+3. 保持按住，插回 USB。
+4. 约 1 秒后松开。
+
+然后运行：
 
 ```bash
-cd firmware
-pio run -t upload --upload-port /dev/cu.usbmodemXXXX
+./scripts/flash_bootstrap.py
 ```
 
-### 方式 B：写合并镜像
+脚本会等待 `303A:1001` 的 ROM USB-JTAG 接口，然后：
 
-```bash
-PORT=/dev/cu.usbmodemXXXX
-esptool --port "$PORT" --baud 460800 write-flash 0x0 firmware/firmware-merged.bin
-```
+- 把原厂分区表复制到 `0x8000`（Arduino 应用从 `0x8000` 读取分区表）
+- 把应用写到 `0x20000`
+- 不覆盖 `0x0` 的原厂 bootloader 和 `0x10000` 的原厂分区表
 
-> ESP32-S3 的 bootloader 偏移是 `0x0`，不是 ESP32 的 `0x1000`。
-> 当前工程按 N16R8（16 MB flash）和 `default_16MB.csv` 分区表构建；
-> 如果备份检测到的容量不是 16 MB，先改 `firmware/platformio.ini`。
+## 3. 验证
 
-## 4. 验证
-
-刷完后设备会自动重启，串口日志应出现：
+串口 115200 应出现：
 
 ```text
-ColoPLAY bring-up firmware 0.1.0-bringup
+ColoPLAY bring-up firmware 0.1.x
 [chip] ESP32-S3 ...
 [wifi] connected: ip=... rssi=... mac=...
-[http] server listening on port 80
+[mdns] http://coloplay.local/
 [ota] ArduinoOTA ready
+[http] server listening on port 80
 ```
 
 然后：
@@ -96,21 +102,51 @@ ColoPLAY bring-up firmware 0.1.0-bringup
 curl http://coloplay.local/api/status
 ```
 
-或直接在浏览器打开 `http://coloplay.local/`。
+本次实测 IP 为 `10.0.0.225`，`/api/status` 返回：
 
-如果 mDNS 不生效，用路由器后台查设备 IP，访问 `http://<IP>/`。
+```json
+{"firmware":"0.1.1-ota","wifi":{"connected":true,"ssid":"OnIoT","ip":"10.0.0.225"}}
+```
 
-## 5. 后续无线升级
+## 4. OTA 升级（已验证）
 
-ArduinoOTA 密码在 `firmware/include/secrets.h` 的 `OTA_PASSWORD`。
-在同一 WiFi 下可以用 PlatformIO 的 `upload_protocol = espota` 或 ArduinoOTA 工具升级，
-不需要再按按钮。
+```bash
+./scripts/ota_upload.sh 10.0.0.225
+```
+
+脚本从 `firmware/include/secrets.h` 读取 `OTA_PASSWORD`，调用 Arduino
+`espota.py` 上传当前 `firmware.bin`。
+
+升级过程：
+
+1. 应用写入 `ota_app1`（`0x4a0000`）
+2. 更新 `otadata`
+3. 重启后原厂 bootloader 从 `0x4a0000` 启动新固件
+
+串口会显示：
+
+```text
+[ota] update started (firmware)
+[ota] 100%
+[ota] update finished
+```
+
+本次已从 `0.1.0-bringup` OTA 到 `0.1.1-ota`，并确认 bootloader 打印
+`Loaded app from partition at offset 0x4a0000`。
+
+## 5. 恢复出厂
+
+```bash
+esptool --port /dev/cu.usbmodemXXXX --baud 460800 \
+  write-flash 0 backups/coloplay-factory-20261113-131459.bin
+```
 
 ## 6. 已知限制
 
-- 屏幕、音频、按键灯、旋钮都还没有驱动；这是刻意的最小固件。
-- 屏幕控制器型号尚未从原理图确认；ColoX 文档说明是 240×240 圆屏，
-  常见候选为 GC9A01，需从出厂固件或屏排线确认。
-- 如果设备启用了 Secure Boot，自定义固件无法启动，只能恢复出厂备份。
-- WiFi 凭据会编译进固件；不要把 `firmware/include/secrets.h` 提交到公开仓库
-  （已在 `.gitignore` 中忽略）。
+- 屏幕、音频、按键灯、旋钮尚未驱动；这是刻意的最小固件。
+- `psram_bytes` 显示 0：当前 PSRAM 初始化未启用/未验证，不影响 WiFi/OTA。
+- 原厂 bootloader 的 SHA-256 警告不可消除，除非替换 bootloader；
+  目前它选择继续启动，OTA 已实测可用。
+- WiFi 凭据会编译进固件；`firmware/include/secrets.h` 已在 `.gitignore` 中。
+- 如果后续固件需要显示，使用 GC9A01 + 已确认的 SPI 引脚：
+  CLK 14、MOSI 13、CS 12、DC/RS 11、RST 45、BLK 18、TE 17。

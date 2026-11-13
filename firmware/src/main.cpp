@@ -22,7 +22,7 @@
 namespace {
 
 constexpr const char *kHostname = "coloplay";
-constexpr const char *kFirmwareVersion = "0.1.0-bringup";
+constexpr const char *kFirmwareVersion = "0.1.1-ota";
 constexpr uint32_t kWifiRetryMs = 10000;
 
 WebServer server(80);

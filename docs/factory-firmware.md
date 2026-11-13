@@ -63,6 +63,31 @@
 这确认了显示和音频的硬件选型，也解释了原厂固件的结构：ColoX Lua VM +
 LVGL + GC9A01 + ES8311。
 
+## Bootloader 与自定义固件
+
+原厂 bootloader 位于 `0x0`，分区表在 `0x10000`，应用槽在 `0x20000`
+（`ota_app0`）和 `0x4a0000`（`ota_app1`）。
+
+这台机器的 flash 芯片 Manufacturer ID 为 `0x46`，Arduino 默认 bootloader
+在这颗芯片上无法正常启动（反复 `TG0WDT_SYS_RST`）。因此自定义固件保留原厂
+bootloader，只替换应用：
+
+- 在 `0x8000` 写入原厂分区表的副本，供 Arduino 应用读取
+- 在 `0x20000` 写应用
+- `0x0`、`0x10000`、NVS、PHY、OTA 数据都保持不变
+
+原厂 bootloader 启动时会打印：
+
+```text
+SHA-256 comparison failed:
+Calculated: ...
+Expected: ...
+Attempting to boot anyway...
+```
+
+这是 bootloader 对自身镜像头的校验警告；它随后继续启动。实测 OTA 写入
+`0x4a0000` 后，bootloader 正常从该槽启动。
+
 ## 恢复
 
 ```bash
@@ -70,4 +95,4 @@ esptool --port /dev/cu.usbmodemXXXX --baud 460800 \
   write-flash 0 backups/coloplay-factory-20261113-131459.bin
 ```
 
-恢复后原厂分区表、应用、NVS 和 LittleFS 都会回到备份时的状态。
+恢复后原厂 bootloader、分区表、应用、NVS 和 LittleFS 都会回到备份时的状态。
