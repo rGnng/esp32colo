@@ -1,36 +1,30 @@
-// ColoPLAY (ESP32-S3-WROOM-1-N16R8) first-stage bring-up firmware.
-//
-// What it does:
-//   * stores WiFi credentials in NVS (seeded from include/secrets.h on the
-//     first boot), then joins that network
-//   * serves a small status page at http://coloplay.local/ and /api/status
-//   * lets you change the stored WiFi credentials at POST /api/wifi
-//   * exposes the documented buttons (GPIO0 / GPIO15 / GPIO46) for testing
-//   * enables ArduinoOTA for subsequent wireless updates
-//
-// It intentionally does NOT initialise the display, audio codec, or any other
-// unverified peripheral.  That keeps this image safe to use as a first flash
-// on a board whose exact variant is still unknown.
+// ColoPLAY V1 hardware demo. Keep the factory bootloader / partition tables.
 
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
 #include <ArduinoOTA.h>
-#include <ESP.h>
+#include <Esp.h>
 #include <Preferences.h>
+#include <esp_ota_ops.h>
 
 #include "secrets.h"
+#include "board_pins.h"
+#include "hardware_demo.h"
+#include "http_ota.h"
+#include "web_ui.h"
 
 namespace {
 
 constexpr const char *kHostname = "coloplay";
-constexpr const char *kFirmwareVersion = "0.1.3-nvs";
+constexpr const char *kFirmwareVersion = "0.2.0-demo";
 constexpr const char *kPrefsNamespace = "wifi";
 constexpr uint32_t kWifiRetryMs = 10000;
 
 WebServer server(80);
 Preferences wifiPrefs;
+Preferences demoPrefs;
 String gSsid;
 String gPassword;
 
@@ -40,9 +34,12 @@ struct Button {
   bool pullup;
 };
 
-// Pin assignments from the ColoPLAY V1 schematic (unverified on this unit):
-//   REC_KEY -> GPIO0, OPEN_KEY -> GPIO15, knob push -> GPIO46.
+// Early inputs for recovery and telemetry before the demo starts.
 constexpr Button kButtons[] = {
+    {"KEY1", Board::kKey1, true},
+    {"KEY2", Board::kKey2, true},
+    {"KEY3", Board::kKey3, true},
+    {"KEY4", Board::kKey4, true},
     {"REC_KEY", 0, true},
     {"OPEN_KEY", 15, true},
     {"KNOB", 46, false},  // input-only pin, external pull-up on the board
@@ -50,6 +47,10 @@ constexpr Button kButtons[] = {
 
 bool gOtaReady = false;
 bool gPrefsOpen = false;
+bool gDemoPrefsOpen = false, gRecoveryMode = false, gHardwareStarted = false;
+bool gBootConfirmed = false, gArduinoOtaBusy = false;
+uint8_t gBootAttempts = 0;
+uint32_t gHardwareStartAt = 0, gHardwareStartedAt = 0;
 uint32_t gLastWifiAttempt = 0;
 String gSerialLine;
 
@@ -63,21 +64,6 @@ String jsonEscape(const String &input) {
       case '\n': out += "\\n"; break;
       case '\r': out += "\\r"; break;
       case '\t': out += "\\t"; break;
-      default: out += c; break;
-    }
-  }
-  return out;
-}
-
-String htmlEscape(const String &input) {
-  String out;
-  out.reserve(input.length() + 8);
-  for (char c : input) {
-    switch (c) {
-      case '&': out += "&amp;"; break;
-      case '<': out += "&lt;"; break;
-      case '>': out += "&gt;"; break;
-      case '"': out += "&quot;"; break;
       default: out += c; break;
     }
   }
@@ -145,6 +131,7 @@ void logWifiResult() {
 }
 
 String buttonStateJson() {
+  if (HardwareDemo::ready()) return HardwareDemo::buttonsJson();
   String json = "[";
   for (size_t i = 0; i < sizeof(kButtons) / sizeof(kButtons[0]); ++i) {
     if (i) json += ",";
@@ -162,9 +149,10 @@ String buttonStateJson() {
 
 String statusJson() {
   String json;
-  json.reserve(512);
+  json.reserve(2400);
   json += "{";
   json += "\"firmware\":\"" + String(kFirmwareVersion) + "\",";
+  json += "\"sketch_md5\":\"" + ESP.getSketchMD5() + "\",";
   json += "\"hostname\":\"" + String(kHostname) + "\",";
   json += "\"chip\":\"" + String(ESP.getChipModel()) + "\",";
   json += "\"chip_revision\":" + String(ESP.getChipRevision()) + ",";
@@ -172,6 +160,12 @@ String statusJson() {
   json += "\"psram_bytes\":" + String(ESP.getPsramSize()) + ",";
   json += "\"free_heap\":" + String(ESP.getFreeHeap()) + ",";
   json += "\"uptime_ms\":" + String(millis()) + ",";
+  json += "\"reset_reason\":" + String(static_cast<int>(esp_reset_reason())) + ",";
+  json += "\"recovery_mode\":" + String(gRecoveryMode ? "true" : "false") + ",";
+  json += "\"boot_attempts\":" + String(gBootAttempts) + ",";
+  json += "\"http_ota\":true,";
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  json += "\"running_partition\":\"" + String(running ? running->label : "unknown") + "\",";
   json += "\"wifi\":{";
   json += "\"connected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
   json += "\"ssid\":\"" + jsonEscape(WiFi.SSID()) + "\",";
@@ -181,7 +175,8 @@ String statusJson() {
   json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
   json += "\"mac\":\"" + WiFi.macAddress() + "\"";
   json += "},";
-  json += "\"buttons\":" + buttonStateJson();
+  json += "\"buttons\":" + buttonStateJson() + ",";
+  json += "\"hardware\":" + HardwareDemo::statusJson();
   json += "}";
   return json;
 }
@@ -238,65 +233,33 @@ void pollSerial() {
   }
 }
 
-String htmlPage() {
-  String ip = WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "not connected";
-  String page;
-  page.reserve(2048);
-  page += F(
-      "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-      "<meta http-equiv=\"refresh\" content=\"3\">"
-      "<title>ColoPLAY bring-up</title>"
-      "<style>"
-      "body{font:15px/1.5 system-ui,sans-serif;max-width:640px;margin:40px auto;padding:0 16px;color:#19332e}"
-      "h1{font-size:22px}table{border-collapse:collapse;width:100%}"
-      "td{padding:6px 8px;border-bottom:1px solid #d6dfd5}td:first-child{color:#53665e;width:160px}"
-      "code{font-size:13px}.on{color:#096b54;font-weight:600}.off{color:#865000}"
-      "</style></head><body>");
-  page += F("<h1>ColoPLAY bring-up firmware</h1><table>");
-  page += "<tr><td>Firmware</td><td><code>" + String(kFirmwareVersion) + "</code></td></tr>";
-  page += "<tr><td>Chip</td><td>" + String(ESP.getChipModel()) + " rev " +
-          String(ESP.getChipRevision()) + "</td></tr>";
-  page += "<tr><td>Flash</td><td>" + String(ESP.getFlashChipSize() / 1024 / 1024) + " MB</td></tr>";
-  page += "<tr><td>PSRAM</td><td>" + String(ESP.getPsramSize() / 1024 / 1024) + " MB</td></tr>";
-  page += "<tr><td>Free heap</td><td>" + String(ESP.getFreeHeap() / 1024) + " KB</td></tr>";
-  page += "<tr><td>Uptime</td><td>" + String(millis() / 1000) + " s</td></tr>";
-  page += "<tr><td>WiFi SSID</td><td>" + htmlEscape(gSsid) + " (NVS)</td></tr>";
-  page += "<tr><td>IP address</td><td>" + ip + "</td></tr>";
-  page += "<tr><td>RSSI</td><td>" + String(WiFi.RSSI()) + " dBm</td></tr>";
-  page += "<tr><td>MAC</td><td><code>" + WiFi.macAddress() + "</code></td></tr>";
-
-  for (const auto &button : kButtons) {
-    bool pressed = digitalRead(button.pin) == LOW;
-    page += "<tr><td>" + String(button.name) + " (GPIO" + String(button.pin) + ")</td><td>";
-    page += pressed ? F("<span class=\"on\">pressed</span>")
-                    : F("<span class=\"off\">released</span>");
-    page += "</td></tr>";
-  }
-
-  page += F("</table><h2>WiFi credentials (NVS)</h2>"
-            "<p>Saving restarts the device. Leave the password empty to keep the current one.</p>"
-            "<form method=\"post\" action=\"/api/wifi\">"
-            "<label>SSID <input name=\"ssid\" required value=\"");
-  page += htmlEscape(gSsid);
-  page += F("\"></label><br><br>"
-            "<label>Password <input name=\"password\" type=\"password\"></label><br><br>"
-            "<button type=\"submit\">Save and reboot</button>"
-            "</form>"
-            "<p><a href=\"/api/status\">JSON status</a></p>"
-            "<p>Display, audio and input handling are not implemented yet.</p>"
-            "</body></html>");
-  return page;
-}
-
 void setupHttp() {
-  server.on("/", HTTP_GET, [] { server.send(200, "text/html; charset=utf-8", htmlPage()); });
+  server.on("/", HTTP_GET, [] { server.send_P(200, "text/html; charset=utf-8", kDemoPage); });
   server.on("/api/status", HTTP_GET, [] {
     server.send(200, "application/json", statusJson());
   });
   server.on("/api/wifi", HTTP_GET, [] {
     String json = "{\"ssid\":\"" + jsonEscape(gSsid) + "\",\"source\":\"nvs\"}";
     server.send(200, "application/json", json);
+  });
+  server.on("/api/demo", HTTP_POST, [] {
+    String error;
+    if (!HardwareDemo::configure(server, error)) {
+      server.send(400, "application/json", "{\"error\":\"" + jsonEscape(error) + "\"}");
+      return;
+    }
+    server.send(200, "application/json", HardwareDemo::statusJson());
+  });
+  server.on("/api/screenshot.bmp", HTTP_GET, [] { HardwareDemo::sendScreenshot(server); });
+  server.on("/api/hardware/retry", HTTP_POST, [] {
+    if (!server.authenticate("admin", OTA_PASSWORD)) {
+      server.requestAuthentication(BASIC_AUTH, "ColoPLAY OTA");
+      return;
+    }
+    if (gDemoPrefsOpen) demoPrefs.putUChar("attempts", 0);
+    server.send(200, "application/json", "{\"retrying\":true,\"rebooting\":true}");
+    delay(200);
+    ESP.restart();
   });
   server.on("/api/wifi", HTTP_POST, [] {
     if (!server.hasArg("ssid")) {
@@ -309,7 +272,11 @@ void setupHttp() {
     if (password.isEmpty()) {
       password = gPassword;
     }
-    if (ssid.isEmpty() || !saveWifiCredentials(ssid, password)) {
+    if (ssid.isEmpty() || ssid.length() > 32 || password.length() > 63) {
+      server.send(400, "application/json", "{\"error\":\"invalid WiFi credentials length\"}");
+      return;
+    }
+    if (!saveWifiCredentials(ssid, password)) {
       server.send(500, "application/json", "{\"error\":\"could not save to NVS\"}");
       return;
     }
@@ -326,6 +293,7 @@ void setupHttp() {
   server.onNotFound([] {
     server.send(404, "text/plain", "not found\n");
   });
+  HttpOta::setup(server, OTA_PASSWORD);
   server.begin();
   Serial.println("[http] server listening on port 80");
 }
@@ -335,6 +303,8 @@ void setupOta() {
   ArduinoOTA.setPassword(OTA_PASSWORD);
 
   ArduinoOTA.onStart([] {
+    gArduinoOtaBusy = true;
+    HardwareDemo::pause(true);
     const String type = ArduinoOTA.getCommand() == U_FLASH ? "firmware" : "filesystem";
     Serial.printf("[ota] update started (%s)\n", type.c_str());
   });
@@ -343,6 +313,8 @@ void setupOta() {
     Serial.printf("[ota] %u%%\r", total ? (progress * 100) / total : 0);
   });
   ArduinoOTA.onError([](ota_error_t error) {
+    gArduinoOtaBusy = false;
+    HardwareDemo::pause(false);
     Serial.printf("[ota] error %u\n", static_cast<unsigned>(error));
   });
 
@@ -371,6 +343,12 @@ void setup() {
   for (const auto &button : kButtons) {
     pinMode(button.pin, button.pullup ? INPUT_PULLUP : INPUT);
   }
+  gDemoPrefsOpen = demoPrefs.begin("demo", false);
+  if (gDemoPrefsOpen) gBootAttempts = demoPrefs.getUChar("attempts", 0);
+  // Two failed starts leave the web server and OTA available on the third
+  // boot. Holding KEY1 during reset also skips peripheral setup. KEY1 is
+  // not a boot strap; REC (GPIO0) is reserved for ROM download mode.
+  gRecoveryMode = gBootAttempts >= 2 || digitalRead(Board::kKey1) == LOW;
 
   loadWifiCredentials();
 
@@ -402,6 +380,8 @@ void setup() {
   }
 
   setupHttp();
+  // Give both update methods a recovery window before touching peripherals.
+  gHardwareStartAt = millis() + 5000;
 }
 
 void loop() {
@@ -418,10 +398,28 @@ void loop() {
     setupOta();
   }
 
-  if (WiFi.status() == WL_CONNECTED && gOtaReady) {
+  if (WiFi.status() == WL_CONNECTED && gOtaReady && !HttpOta::busy()) {
     ArduinoOTA.handle();
   }
   server.handleClient();
+  HttpOta::tick();
   pollSerial();
+  if (!gArduinoOtaBusy && !HttpOta::busy()) {
+    if (!gHardwareStarted && !gRecoveryMode &&
+        static_cast<int32_t>(millis() - gHardwareStartAt) >= 0) {
+      gHardwareStarted = true;
+      ++gBootAttempts;
+      if (gDemoPrefsOpen) demoPrefs.putUChar("attempts", gBootAttempts);
+      HardwareDemo::begin();
+      gHardwareStartedAt = millis();
+    }
+    HardwareDemo::tick();
+    if (HardwareDemo::ready() && !gBootConfirmed &&
+        millis() - gHardwareStartedAt >= 30000) {
+      gBootConfirmed = true;
+      gBootAttempts = 0;
+      if (gDemoPrefsOpen) demoPrefs.putUChar("attempts", 0);
+    }
+  }
   delay(2);
 }

@@ -1,0 +1,4 @@
+Source: https://github.com/espressif/esp-bsp/tree/901d9481034e2095a2faf8a72f4ecf05680ddd71/components/es8311
+License: Apache-2.0 (see LICENSE). Files copied without modification.
+The legacy-I2C driver matches the existing Arduino 2 / IDF 4 firmware.
+Upstream recommends esp_codec_dev for new IDF projects.

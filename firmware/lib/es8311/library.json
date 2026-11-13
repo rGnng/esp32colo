@@ -1,0 +1,9 @@
+{
+  "name": "es8311",
+  "version": "1.0.0",
+  "description": "Espressif ES8311 legacy-I2C driver for Arduino 2 / IDF 4",
+  "license": "Apache-2.0",
+  "build": {
+    "srcDir": "src"
+  }
+}

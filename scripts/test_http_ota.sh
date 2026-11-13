@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+TEST_BIN="$(mktemp "${TMPDIR:-/tmp}/coloplay-http-ota.XXXXXX")"
+trap 'rm -f "$TEST_BIN"' EXIT
+"${CXX:-c++}" -std=c++11 -Wall -Wextra -Werror -Itests/ota_fakes -Ifirmware/include \
+  firmware/src/http_ota.cpp tests/http_ota_test.cpp -o "$TEST_BIN"
+for scenario in unauthorized wrong-chip bootloader partition empty truncated abort timeout invalid-md5 multiple-files verification-failure; do
+  "$TEST_BIN" "$scenario"
+done
+for chunk in 1 7 35 36 37 128 1436; do
+  "$TEST_BIN" success "$chunk"
+done
+python3 -m unittest discover -s tests -p 'test_ota_upload.py' -v

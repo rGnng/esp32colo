@@ -2,23 +2,54 @@
 
 ## 备份
 
+2026-11-13 从用户上传的 `cololight_firmware_backups.7z` 导入。
+压缩包、原始镜像、设备日志、校验文件及派生分析都保存在本地 `backups/`，
+该目录由 `.gitignore` 整体忽略。原始镜像未修改。
+
 | 项目 | 值 |
 |---|---|
 | 文件 | `backups/coloplay-factory-20261113-131459.bin` |
 | 大小 | 16 MiB（16,777,216 字节） |
 | SHA-256 | `9c73cc4e389bd798a883dbcd4102ab8144b2e3744c81d004841acd0bf89ad46e` |
 
-读取时芯片信息：
+导入后重新计算的 SHA-256 与上传的 `.bin.sha256` 一致。
+压缩包自身 SHA-256 为
+`c6ed2f2bd71df73ec414c6565da31164b0143f67cf87ae0b592c161d1935d779`。
+
+以下是同一压缩包内 `*-flash-id.txt` / `*-security.txt` 的备份时日志，
+本次没有重新连接设备读取 eFuse：
 
 - ESP32-S3（QFN56，revision v0.2）
-- MAC `58:e6:c5:72:a4:ac`
+- 设备 MAC 保存在本地 `*-mac.txt` 日志
 - 16 MB flash，quad（4 data lines），3.3 V
 - 8 MB embedded PSRAM
 - **Secure Boot: Disabled**
 - **Flash Encryption: Disabled**
 - `SPI_BOOT_CRYPT_CNT: 0x0`
 
-因此这份备份是可读、可恢复的完整出厂镜像。
+这支持它是一份可解析的完整 16 MiB Flash 备份；**不代表恢复启动已经实测成功**。
+Flash 镜像也不是 eFuse、安全密钥或外部硬件状态的备份。
+
+## 完整性与 bootloader 头部差异
+
+- 分区表位于 `0x10000`；ESP-IDF 解析器验证其 MD5 通过，八个分区均不重叠且落在 16 MiB 内。
+- `ota_app0` 的镜像 XOR 校验及追加 SHA-256 均有效。
+- bootloader 位于 `0x0`，镜像总长 `0x5740` 字节；XOR 校验有效，
+  **追加 SHA-256 与当前头部不匹配**。
+- 该差异能被一个字节完整解释：仅在内存中把 bootloader 头部偏移 `0x03`
+  从 `0x40` 改为 `0x4f`，计算结果就与保存的 SHA-256 完全一致。
+  两者都是 16 MB / DIO，频率分别为 **40 MHz** 和 **80 MHz**。
+  这与烧录时覆盖 Flash 频率头部相符；实际发生原因没有独立日志证明。
+- 原始备份仍保留 `0x40`，没有为让校验通过而“修复”或重写它。
+
+bootloader 保存的 SHA-256：
+`f61e15ff4869172de4906ecf0f2a56f17326551bed45fb5c3665539f8cb18642`。
+对当前头部实际计算的值：
+`60d4ed9820c05028bb3dd3302f19356be9ec16f0865e33671e31eb534c6d208f`。
+
+`ota_app0` 追加 SHA-256：
+`30a16e2f1a59d74676009fa48a88af10631be8db3d80d4006220d32ead3891e3`。
+这些是镜像内部摘要，与上表的整个 16 MiB 文件 SHA-256 不同。
 
 ## 分区表
 
@@ -29,12 +60,22 @@
 |---|---|---:|---:|
 | `nvs` | data/nvs | `0x11000` | `0x4000` (16 KiB) |
 | `otadata` | data/ota | `0x15000` | `0x2000` (8 KiB) |
-| `phy_init` | data/phy | `0x17000` | `0x9000` (36 KiB) |
+| `phy_init` | data/phy | `0x17000` | `0x9000` (36 KiB，全 `0xff`) |
 | `ota_app0` | app/ota_0 | `0x20000` | `0x480000` (4.5 MiB) |
-| `ota_app1` | app/ota_1 | `0x4a0000` | `0x480000` (4.5 MiB) |
+| `ota_app1` | app/ota_1 | `0x4a0000` | `0x480000` (4.5 MiB，全 `0xff`) |
 | `user_bin` | data/6 | `0x920000` | `0x100000` (1 MiB) |
-| `lfs` | 194/1 | `0xa20000` | `0x40000` (256 KiB) |
-| `littlefs` | data/130 | `0xa60000` | `0x5a0000` (5.6 MiB) |
+| `lfs` | 自定义 `0xc2/0x01` | `0xa20000` | `0x40000` (256 KiB，全 `0xff`) |
+| `littlefs` | data/`0x82` | `0xa60000` | `0x5a0000` (5.625 MiB) |
+
+`littlefs` 分区起始 `+0x08` 处存在 `littlefs` superblock 标识。其 `0x82` 子类型沿用
+旧式命名约定；新版 ESP-IDF 解析器可能因该子类型在当前 SDK 中名为 `spiffs` 而警告，
+这不等于分区表 MD5 损坏。`lfs` 只是一个自定义类型的空分区，不能仅按标签认定用途。
+
+### OTA 选择
+
+`otadata` 的首条记录（`0x15000`）为 sequence=1、state=2（VALID）、
+CRC=`0x4743989a`，CRC 校验通过；第二条记录（`0x16000`）全 `0xff`。
+按标准 ESP-IDF OTA 选择规则，当前指向 **`ota_app0`**。`ota_app1` 没有第二份可启动应用。
 
 ## 应用信息
 
@@ -46,7 +87,9 @@
 | version | `1` |
 | build date | `Aug  7 2026` |
 | build time | `15:19:48` |
-| IDF | `HEAD-HASH-NOTFOUND`（厂商定制 IDF） |
+| IDF | `HEAD-HASH-NOTFOUND`（未提供可识别的 SDK 版本） |
+
+版本字符串缺失本身不能证明厂商修改了 ESP-IDF，也不能据此选择具体 SDK 版本。
 
 ## 固件组件（字符串证据）
 
@@ -60,8 +103,10 @@
 - `ColoX` Lua VM、`__ColoX-BIOS.lua`、`coloX-4` / `coloX-16` 规格
 - `ColoPLAY1.ver`、`COLOPLAY.bin`、`LifeSmartXzYq:COLOPLAY`
 
-这确认了显示和音频的硬件选型，也解释了原厂固件的结构：ColoX Lua VM +
-LVGL + GC9A01 + ES8311。
+进一步的反汇编追踪到显示初始化实际调用 GC9A01 驱动，恢复了 LCD、I2S、I2C、
+编码器及按键表配置，见 [firmware-gpio-evidence.md](firmware-gpio-evidence.md)。
+证据支持原厂软件使用 ColoX / LVGL / GC9A01 / ES8311 路径；具体面板变体、
+未恢复的外设运行参数仍不能只凭字符串认定。
 
 ## Bootloader 与自定义固件
 
@@ -90,9 +135,24 @@ Attempting to boot anyway...
 
 ## 恢复
 
+仅在同一设备的下载模式下、已确认当前安全配置允许恢复时使用；本次未执行。
+以下为 esptool 5.x 命令，`SERIAL_PORT` 需换成实际端口（Linux 通常为
+`/dev/ttyACM0`，macOS 通常为 `/dev/cu.usbmodem...`）：
+
 ```bash
-esptool --port /dev/cu.usbmodemXXXX --baud 460800 \
-  write-flash 0 backups/coloplay-factory-20261113-131459.bin
+SERIAL_PORT=/dev/ttyACM0
+esptool --chip esp32s3 --port "$SERIAL_PORT" --baud 460800 --after no-reset \
+  write-flash --flash-mode keep --flash-freq keep --flash-size keep \
+  0x0 backups/coloplay-factory-20261113-131459.bin
+esptool --chip esp32s3 --port "$SERIAL_PORT" --before no-reset --after no-reset \
+  verify-flash 0x0 backups/coloplay-factory-20261113-131459.bin
 ```
 
-恢复后原厂 bootloader、分区表、应用、NVS 和 LittleFS 都会回到备份时的状态。
+先保留在下载模式完成比较，再正常断电重启，以免原厂程序运行后更新 NVS 或 OTA 元数据，
+影响逐字节比较。完整写回会覆盖当前 Flash 中的 bootloader、分区、应用、NVS 和文件系统；
+不会还原 eFuse，也会覆盖自定义固件在 NVS 中保存的 WiFi 配置。
+由于上述 bootloader 头部摘要差异及尚未进行的恢复试验，不把“可解析备份”等同于“已验证可恢复”。
+
+参考：[ESP-IDF 分区表](https://docs.espressif.com/projects/esp-idf/en/v5.5.2/esp32s3/api-guides/partition-tables.html)、
+[OTA 元数据](https://docs.espressif.com/projects/esp-idf/en/v5.5.2/esp32s3/api-reference/system/ota.html)、
+[esptool 镜像及 Flash 命令](https://docs.espressif.com/projects/esptool/en/latest/esp32s3/esptool/basic-commands.html)。
