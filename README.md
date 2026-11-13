@@ -25,7 +25,7 @@ LCD, encoder, button-scan, I2C and I2S configuration from that image; see the
 come from the schematics and are not all independently measured on the unit.
 
 The earlier `0.1.3-nvs` WiFi/ArduinoOTA firmware is recorded as flashed and
-OTA-verified in both application slots. The current source is `0.2.5-rotary`, which
+OTA-verified in both application slots. The current source is `0.3.1-clock-usb`, which
 adds display pages, buttons/encoder, RGB animation, audio/microphone telemetry,
 sensor readings, a PSRAM check, browser controls and authenticated HTTP OTA.
 The firmware has been deployed through HTTP OTA and verified by its running-image
@@ -38,6 +38,12 @@ The LED transmitter was reconstructed from the original firmware: SPI3 at
 The rotary decoder now consumes two quadrature edges per mechanical notch;
 the former four-edge divisor caused one UI step per two notches. Partial
 reverse movement is retained until a full notch is completed.
+
+The clock uses embedded Inter fonts and NTP, with server and timezone settings
+saved in NVS. Clock, USB and lighting controls share the existing web page.
+USB Ethernet uses CDC-ECM for macOS, with device `172.32.29.21/24`, one DHCP
+lease at `172.32.29.30`, and no gateway or DNS. USB serial/JTAG is a separate
+selectable mode. See the [clock and USB guide](docs/clock-and-usb.md).
 
 ## Internal pinout
 
@@ -190,11 +196,15 @@ table, not the application address. The application may update NVS after boot.
 After a normal boot, inspect USB serial at 115200 baud and open
 `http://coloplay.local/` (or the IP printed in the serial log):
 
+In USB Ethernet mode the port changes from its early serial console to the
+network interface after startup. Open the same page at `http://172.32.29.21/`,
+or select USB serial/JTAG in web settings for continuous serial access.
+
 ```bash
 curl http://coloplay.local/api/status
 ```
 
-The current source reports version `0.2.5-rotary`, `running_partition`,
+The current source reports version `0.3.1-clock-usb`, `running_partition`,
 `sketch_md5`, WiFi status and hardware telemetry. Peripheral startup waits five
 seconds after the web server starts. Holding **KEY1 (GPIO6)** during a normal
 reset skips the demo and leaves WiFi/web/OTA available; two failed peripheral

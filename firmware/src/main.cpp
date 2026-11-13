@@ -13,12 +13,14 @@
 #include "board_pins.h"
 #include "hardware_demo.h"
 #include "http_ota.h"
+#include "clock_service.h"
+#include "usb_network.h"
 #include "web_ui.h"
 
 namespace {
 
 constexpr const char *kHostname = "coloplay";
-constexpr const char *kFirmwareVersion = "0.2.5-rotary";
+constexpr const char *kFirmwareVersion = "0.3.1-clock-usb";
 constexpr const char *kPrefsNamespace = "wifi";
 constexpr uint32_t kWifiRetryMs = 10000;
 
@@ -176,6 +178,8 @@ String statusJson() {
   json += "\"mac\":\"" + WiFi.macAddress() + "\"";
   json += "},";
   json += "\"buttons\":" + buttonStateJson() + ",";
+  json += "\"clock\":" + ClockService::statusJson() + ",";
+  json += "\"usb\":" + UsbNetwork::statusJson() + ",";
   json += "\"hardware\":" + HardwareDemo::statusJson();
   json += "}";
   return json;
@@ -220,7 +224,7 @@ void handleSerialCommand(const String &line) {
 }
 
 void pollSerial() {
-  while (Serial.available()) {
+  while (Serial.available() > 0) {
     char c = static_cast<char>(Serial.read());
     if (c == '\n' || c == '\r') {
       if (!gSerialLine.isEmpty()) {
@@ -237,6 +241,34 @@ void setupHttp() {
   server.on("/", HTTP_GET, [] { server.send_P(200, "text/html; charset=utf-8", kDemoPage); });
   server.on("/api/status", HTTP_GET, [] {
     server.send(200, "application/json", statusJson());
+  });
+  server.on("/api/clock", HTTP_GET, [] {
+    server.send(200, "application/json", ClockService::statusJson(true));
+  });
+  server.on("/api/clock", HTTP_POST, [] {
+    String error;
+    if (!ClockService::configure(server, error)) {
+      server.send(400, "application/json", "{\"error\":\"" + jsonEscape(error) + "\"}");
+      return;
+    }
+    server.send(200, "application/json", ClockService::statusJson(true));
+  });
+  server.on("/api/clock/sync", HTTP_POST, [] {
+    ClockService::requestSync();
+    server.send(200, "application/json", ClockService::statusJson());
+  });
+  server.on("/api/usb", HTTP_GET, [] {
+    server.send(200, "application/json", UsbNetwork::statusJson());
+  });
+  server.on("/api/usb", HTTP_POST, [] {
+    String error;
+    if (!UsbNetwork::configure(server, error)) {
+      server.send(400, "application/json", "{\"error\":\"" + jsonEscape(error) + "\"}");
+      return;
+    }
+    server.send(200, "application/json", "{\"saved\":true,\"rebooting\":true}");
+    delay(300);
+    ESP.restart();
   });
   server.on("/api/wifi", HTTP_GET, [] {
     String json = "{\"ssid\":\"" + jsonEscape(gSsid) + "\",\"source\":\"nvs\"}";
@@ -327,6 +359,7 @@ void setupOta() {
 
 void setup() {
   HardwareDemo::captureBootStage();
+  UsbNetwork::prepareSerial();
   Serial.begin(115200);
   const uint32_t serialWaitStart = millis();
   while (!Serial && millis() - serialWaitStart < 3000) {
@@ -362,6 +395,8 @@ void setup() {
   gRecoveryMode = gBootAttempts >= 2 || digitalRead(Board::kKey1) == LOW;
 
   loadWifiCredentials();
+  ClockService::begin();
+  UsbNetwork::loadSettings();
 
   // The application owns the credentials in the "wifi" NVS namespace.
   // Stop the WiFi driver from keeping a second copy in its own namespace.
@@ -391,6 +426,8 @@ void setup() {
   }
 
   setupHttp();
+  ClockService::tick();
+  if (gRecoveryMode) UsbNetwork::begin(true);
   // Give both update methods a recovery window before touching peripherals.
   gHardwareStartAt = millis() + 5000;
 }
@@ -414,6 +451,7 @@ void loop() {
   }
   server.handleClient();
   HttpOta::tick();
+  ClockService::tick();
   pollSerial();
   if (!gArduinoOtaBusy && !HttpOta::busy()) {
     if (!gHardwareStarted && !gRecoveryMode &&
@@ -422,6 +460,7 @@ void loop() {
       ++gBootAttempts;
       if (gDemoPrefsOpen) demoPrefs.putUChar("attempts", gBootAttempts);
       HardwareDemo::begin();
+      UsbNetwork::begin(false);
       gHardwareStartedAt = millis();
     }
     HardwareDemo::tick();

@@ -1,0 +1,8 @@
+{
+  "name": "ColoPLAY-TinyUSB-ECM",
+  "version": "0.16.0",
+  "description": "TinyUSB 0.16 network driver, registered as an application class against the Arduino SDK",
+  "license": "MIT AND BSD-3-Clause AND LicenseRef-Public-Domain",
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}

@@ -4,10 +4,14 @@
 #include "demo_levels.h"
 #include "led_strip.h"
 #include "rotary_detents.h"
+#include "clock_service.h"
+#include "inter_clock_fonts.h"
+#include "lighting_settings.h"
 
 #include <Adafruit_NeoPixel.h>
 #include <TFT_eSPI.h>
 #include <WiFi.h>
+#include <Preferences.h>
 #include <driver/adc.h>
 #include <driver/pcnt.h>
 #include <esp_adc_cal.h>
@@ -27,7 +31,9 @@ namespace {
 constexpr float kTau = 6.28318530718f;
 constexpr uint16_t kBackground = 0x0843, kMuted = 0x8CB3;
 constexpr uint16_t kMint = 0x4FF4, kViolet = 0xA37F, kAmber = 0xFD87;
-constexpr const char *kPages[] = {"ORBIT", "INPUTS", "AUDIO", "SENSORS"};
+constexpr const char *kPages[] = {"ORBIT", "INPUTS", "AUDIO", "SENSORS", "CLOCK"};
+constexpr int kPageCount = sizeof(kPages) / sizeof(kPages[0]);
+constexpr int kClockPage = 4;
 TFT_eSPI gTft;
 TFT_eSprite gCanvas(&gTft);
 struct Key {
@@ -44,8 +50,15 @@ Key gKeys[] = {{"KEY1", Board::kKey1, true}, {"KEY2", Board::kKey2, true},
                {"OPEN_KEY", Board::kOpenButton, true},
                {"REC_KEY", Board::kRecoveryButton, true}};
 bool gReady = false, gPaused = false, gDisplay = false, gEncoder = false;
-bool gAwake = true, gAuto = true, gPsramTest = false, gBacklight = false;
-int gPage = 0, gBrightness = 65, gLedBrightness = 40;
+bool gAwake = true, gAuto = false, gPsramTest = false, gBacklight = false;
+int gPage = kClockPage;
+LightingSettings::Stored gLighting;
+Preferences gLightingPrefs;
+bool gLightingPrefsOpen = false, gLightingStored = false;
+bool gLightingDirty = false, gHaveLight = false, gLightUsable = false;
+uint32_t gLightingChangedAt = 0, gLastLightAt = 0;
+float gFilteredLight = 0, gAutoFactor = 1;
+int gScreenLevel = 70, gRingLevel = 70, gKeysLevel = 70;
 int gLedTest = 0;
 uint32_t gLedTestUntil = 0;
 int32_t gEncoderEdges = 0, gKnobPosition = 0;
@@ -82,11 +95,40 @@ void setStage(Stage stage) {
 void IRAM_ATTR onTe() { ++gTePulses; }
 
 void setBacklight() {
-  if (gBacklight) ledcWrite(0, gAwake ? gBrightness * 1023 / 100 : 0);
+  if (gBacklight) ledcWrite(0, gAwake ? gScreenLevel * 1023 / 100 : 0);
+}
+
+void updateBrightness() {
+  gLightUsable = gHaveLight && uint32_t(millis() - gLastLightAt) <= 5000;
+  gAutoFactor = gLightUsable ? LightingSettings::factor(
+      gFilteredLight, gLighting.darkRaw, gLighting.brightRaw) : 1;
+  gScreenLevel = LightingSettings::level(gLighting.screen, gLighting.autoScreen, gLightUsable, gAutoFactor);
+  gRingLevel = LightingSettings::level(gLighting.ring, gLighting.autoRing, gLightUsable, gAutoFactor);
+  gKeysLevel = LightingSettings::level(gLighting.keys, gLighting.autoKeys, gLightUsable, gAutoFactor);
+  setBacklight();
+}
+
+bool saveLighting(const LightingSettings::Stored &candidate) {
+  return gLightingPrefsOpen && gLightingPrefs.putBytes("settings", &candidate,
+      sizeof(candidate)) == sizeof(candidate);
+}
+
+void loadLighting() {
+  gLightingPrefsOpen = gLightingPrefs.begin("lighting", false);
+  LightingSettings::Stored stored;
+  if (gLightingPrefsOpen && gLightingPrefs.getBytesLength("settings") == sizeof(stored) &&
+      gLightingPrefs.getBytes("settings", &stored, sizeof(stored)) == sizeof(stored) &&
+      LightingSettings::valid(stored)) {
+    gLighting = stored;
+    gLightingStored = true;
+  } else {
+    gLightingStored = saveLighting(gLighting);
+  }
+  updateBrightness();
 }
 
 void selectPage(int page, bool automatic) {
-  gPage = constrain(page, 0, 3);
+  gPage = constrain(page, 0, kPageCount - 1);
   gAuto = automatic;
   gLastPage = millis();
 }
@@ -102,12 +144,16 @@ void readSensors() {
   if (gLightError == ESP_OK) {
     gLightRaw = light;
     gLightMv = esp_adc_cal_raw_to_voltage(light, &gLightCal);
+    gFilteredLight = gHaveLight ? gFilteredLight + 0.2f * (light - gFilteredLight) : light;
+    gHaveLight = true;
+    gLastLightAt = millis();
     ++gLightReadings;
   } else {
     ++gLightErrors;
     // Keep the last good measurement and publish the error explicitly.
     // WiFi can contend with ADC2; a failed read is not a dark-room value.
   }
+  updateBrightness();
 }
 
 void checkPsram() {
@@ -166,7 +212,7 @@ void pollInputs(uint32_t now) {
     if (!key.pressed) continue;
     ++key.presses;
     if (i < 4) {
-      selectPage(i, false);
+      selectPage(i == 0 ? kClockPage : i, false);
       if (i == 2) AudioDemo::beep();
     } else if (i == 4) {
       gAuto = !gAuto;
@@ -196,8 +242,10 @@ void pollInputs(uint32_t now) {
   if (gPage == 2) {
     AudioDemo::setVolume(AudioDemo::snapshot().volume + delta * 2);
   } else {
-    gBrightness = constrain(gBrightness + delta * 3, 0, 100);
-    setBacklight();
+    gLighting.screen = constrain(int(gLighting.screen) + delta * 3, 0, 100);
+    gLightingDirty = true;
+    gLightingChangedAt = now;
+    updateBrightness();
   }
 }
 
@@ -234,7 +282,7 @@ void drawInputs() {
   text(String(gKnobPosition), 120, 91, kMint, 4);
   text("KNOB", 120, 120, kMuted);
   gCanvas.drawCircle(120, 117, 44, gKeys[4].pressed ? kAmber : 0x3189);
-  text("Light " + String(gBrightness) + "%", 120, 177, TFT_WHITE);
+  text("Light " + String(gScreenLevel) + "%", 120, 177, TFT_WHITE);
   text("Press knob: auto tour", 120, 199, kMuted);
 }
 
@@ -269,9 +317,28 @@ void drawSensors() {
        (gPsramTest ? "PASS" : "unverified"), 120, 190, gPsramTest ? kMint : kAmber);
 }
 
+void drawClock() {
+  const auto clock = ClockService::snapshot();
+  gCanvas.loadFont(kInterClock64);
+  gCanvas.setTextColor(TFT_WHITE, kBackground);
+  gCanvas.setTextDatum(MC_DATUM);
+  // Fixed positions keep the digits still when the sync colon appears.
+  gCanvas.drawString(String(clock.hhmm).substring(0, 2), 72, 120);
+  gCanvas.drawString(String(clock.hhmm).substring(3, 5), 168, 120);
+  if (clock.valid && clock.synced) gCanvas.drawString(":", 120, 120);
+  gCanvas.unloadFont();
+}
+
 void render(uint32_t now) {
   if (!gDisplay || !gAwake) return;
   gCanvas.fillSprite(kBackground);
+  gCanvas.setTextDatum(TC_DATUM);
+  if (gPage == kClockPage) {
+    drawClock();
+    gCanvas.pushSprite(0, 0);
+    ++gFrames;
+    return;
+  }
   gCanvas.drawCircle(120, 120, 117, 0x2969);
   // A slow moving marker makes a stalled render loop immediately visible.
   const float phase = now * 0.001f;
@@ -284,26 +351,24 @@ void render(uint32_t now) {
     case 2: drawAudio(); break;
     case 3: drawSensors(); break;
   }
-  for (int i = 0; i < 4; ++i) {
-    gCanvas.fillCircle(99 + i * 14, 229, 3, i == gPage ? kMint : 0x3189);
+  for (int i = 0; i < kPageCount; ++i) {
+    gCanvas.fillCircle(92 + i * 14, 229, 3, i == gPage ? kMint : 0x3189);
   }
   gCanvas.pushSprite(0, 0);
   ++gFrames;
 }
 
 void animateLeds(uint32_t now) {
-  const int brightness = gAwake ? gLedBrightness : 0;
   if (gLedTest && static_cast<int32_t>(now - gLedTestUntil) >= 0) gLedTest = 0;
   constexpr uint32_t kTestColors[] = {0, 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF};
   for (int i = 0; i < Board::kPixelCount; ++i) {
     const uint16_t hue = now * 12 + i * 65536 / Board::kPixelCount;
-    uint32_t color = gLedTest ? kTestColors[gLedTest]
-                             : Adafruit_NeoPixel::gamma32(Adafruit_NeoPixel::ColorHSV(hue, 220, 255));
-    if (!gLedTest && i >= Board::kKeyPixelStart &&
-        i < Board::kKeyPixelStart + Board::kKeyPixels &&
-        gKeys[i - Board::kKeyPixelStart].pressed) color = 0xFFFFFF;
-    if (!gLedTest && i >= Board::kKeyPixelStart + Board::kKeyPixels) color = 0;
-    LedStrip::setPixel(i, DemoLevels::scaleRgb(color, brightness));
+    uint32_t color = gLedTest ? kTestColors[gLedTest] : Adafruit_NeoPixel::gamma32(
+        gLighting.mode == LightingSettings::kStatic ? gLighting.color
+        : Adafruit_NeoPixel::ColorHSV(hue, 220, 255));
+    if (i >= Board::kKeyPixelStart + Board::kKeyPixels) color = 0;
+    const int level = !gAwake ? 0 : i < Board::kKeyPixelStart ? gRingLevel : gKeysLevel;
+    LedStrip::setPixel(i, DemoLevels::scaleRgb(color, LightingSettings::pwm(level)));
   }
   LedStrip::show();
   ++gLedFrames;
@@ -336,6 +401,7 @@ void captureBootStage() {
 
 void begin() {
   Serial.println("[hardware] initialise ColoPLAY V1 peripherals");
+  loadLighting();
   for (Key &key : gKeys) {
     pinMode(key.pin, key.pullup ? INPUT_PULLUP : INPUT);
     key.raw = key.pressed = digitalRead(key.pin) == LOW;
@@ -401,10 +467,18 @@ void tick() {
   if (!gReady || gPaused) return;
   const uint32_t now = millis();
   pollInputs(now);
-  if (gAuto && now - gLastPage >= 10000) selectPage((gPage + 1) % 4, true);
+  // Debounce knob writes so continuous turning does not wear NVS.
+  if (gLightingDirty && now - gLightingChangedAt >= 1500) {
+    gLightingStored = saveLighting(gLighting);
+    gLightingDirty = !gLightingStored;
+    gLightingChangedAt = now;
+  }
+  if (gAuto && now - gLastPage >= 10000) selectPage((gPage + 1) % kPageCount, true);
   if (now - gLastSensors >= 500) { gLastSensors = now; readSensors(); }
   if (now - gLastLeds >= 33) { gLastLeds = now; animateLeds(now); }
-  if (now - gLastFrame >= 50) { gLastFrame = now; render(now); }
+  if (now - gLastFrame >= (gPage == kClockPage ? 200u : 50u)) {
+    gLastFrame = now; render(now);
+  }
   if (now - gLastMetrics >= 1000) {
     const uint32_t elapsed = now - gLastMetrics, pulses = gTePulses;
     gFps = (gFrames - gPreviousFrames) * 1000.0f / elapsed;
@@ -446,7 +520,9 @@ String statusJson() {
   json += ",\"framebuffer_ready\":" + String(gDisplay ? "true" : "false");
   json += ",\"frames\":" + String(gFrames) + ",\"fps\":" + String(gFps, 1);
   json += ",\"te_pulses\":" + String(gTePulses) + ",\"te_hz\":" + String(gTeHz, 1);
-  json += ",\"brightness\":" + String(gBrightness) + ",\"spi_hz\":40000000}";
+  json += ",\"brightness\":" + String(gLighting.screen);
+  json += ",\"auto_brightness\":" + String(gLighting.autoScreen ? "true" : "false");
+  json += ",\"effective_brightness\":" + String(gAwake ? gScreenLevel : 0) + ",\"spi_hz\":40000000}";
   json += ",\"encoder\":{\"ready\":" + String(gEncoder ? "true" : "false");
   json += ",\"edges\":" + String(gEncoderEdges) + ",\"position\":" + String(gKnobPosition);
   json += ",\"edges_per_detent\":" + String(RotaryDetents::kEdgesPerDetent);
@@ -457,8 +533,23 @@ String statusJson() {
   json += ",\"ready\":" + String(LedStrip::ready() ? "true" : "false");
   json += ",\"transfers\":" + String(LedStrip::transfers());
   json += ",\"error\":" + String(LedStrip::error()) + ",\"errors\":" + String(LedStrip::errors());
-  json += ",\"brightness\":" + String(gLedBrightness) + ",\"test_mode\":" + String(gLedTest);
+  // Retain the legacy byte-scale ring brightness for older API clients.
+  json += ",\"brightness\":" + String(LightingSettings::pwm(gLighting.ring));
+  json += ",\"ring_brightness\":" + String(gLighting.ring);
+  json += ",\"keys_brightness\":" + String(gLighting.keys);
+  json += ",\"auto_ring\":" + String(gLighting.autoRing ? "true" : "false");
+  json += ",\"auto_keys\":" + String(gLighting.autoKeys ? "true" : "false");
+  json += ",\"ring_effective\":" + String(gAwake ? gRingLevel : 0);
+  json += ",\"keys_effective\":" + String(gAwake ? gKeysLevel : 0);
+  json += ",\"mode\":\"" + String(gLighting.mode == LightingSettings::kStatic ? "static" : "rainbow") + "\"";
+  char color[8];
+  snprintf(color, sizeof(color), "#%06lx", static_cast<unsigned long>(gLighting.color));
+  json += ",\"color\":\"" + String(color) + "\",\"test_mode\":" + String(gLedTest);
   json += ",\"frames\":" + String(gLedFrames) + "}";
+  json += ",\"lighting\":{\"stored\":" + String(gLightingStored && !gLightingDirty ? "true" : "false");
+  json += ",\"auto_dark_raw\":" + String(gLighting.darkRaw);
+  json += ",\"auto_bright_raw\":" + String(gLighting.brightRaw);
+  json += ",\"sensor_usable\":" + String(gLightUsable ? "true" : "false") + "}";
   json += ",\"sensors\":{\"vdd_raw\":" + String(gSupplyRaw);
   json += ",\"vdd_mv_approx\":" + String(gSupplyMv);
   json += ",\"light_raw\":" + String(gLightRaw) + ",\"light_mv\":" + String(gLightMv);
@@ -474,28 +565,75 @@ String statusJson() {
 
 bool configure(WebServer &server, String &error) {
   if (!gReady) { error = "hardware not started (or recovery mode)"; return false; }
-  int page = gPage, automatic = gAuto, light = gBrightness;
-  int leds = gLedBrightness, volume = AudioDemo::snapshot().volume, ledTest = 0;
+  int page = gPage, automatic = gAuto;
+  int volume = AudioDemo::snapshot().volume, ledTest = 0;
   int tone = 0, duration = 250, awake = gAwake;
-  if (!argument(server, "page", 0, 3, page, error) ||
+  if (!argument(server, "page", 0, kPageCount - 1, page, error) ||
       !argument(server, "auto", 0, 1, automatic, error) ||
-      !argument(server, "brightness", 0, 100, light, error) ||
-      !argument(server, "leds", 0, 64, leds, error) ||
       !argument(server, "volume", 0, 100, volume, error) ||
       !argument(server, "led_test", 0, 4, ledTest, error) ||
       !argument(server, "tone", 100, 4000, tone, error) ||
       !argument(server, "duration", 30, 1500, duration, error) ||
       !argument(server, "awake", 0, 1, awake, error)) return false;
+  LightingSettings::Stored candidate = gLighting;
+  if (server.hasArg("leds")) {
+    int legacy = 0;
+    if (!argument(server, "leds", 0, 64, legacy, error)) return false;
+    candidate.ring = candidate.keys = (legacy * 100 + 127) / 255;
+  }
+  auto setting = [&](const char *name, uint32_t &value, int maximum) {
+    int number = value;
+    if (!argument(server, name, 0, maximum, number, error)) return false;
+    value = number;
+    return true;
+  };
+  if (!setting("brightness", candidate.screen, 100) ||
+      !setting("ring_brightness", candidate.ring, 100) ||
+      !setting("keys_brightness", candidate.keys, 100) ||
+      !setting("auto_screen", candidate.autoScreen, 1) ||
+      !setting("auto_ring", candidate.autoRing, 1) ||
+      !setting("auto_keys", candidate.autoKeys, 1) ||
+      !setting("auto_dark_raw", candidate.darkRaw, 4095) ||
+      !setting("auto_bright_raw", candidate.brightRaw, 4095)) return false;
+  if (server.hasArg("led_mode")) {
+    const String mode = server.arg("led_mode");
+    if (mode != "rainbow" && mode != "static") {
+      error = "led_mode must be rainbow or static"; return false;
+    }
+    candidate.mode = mode == "static" ? LightingSettings::kStatic : LightingSettings::kRainbow;
+  }
+  if (server.hasArg("led_color")) {
+    const String color = server.arg("led_color");
+    if (color.length() != 7 || color[0] != '#') {
+      error = "led_color must be #RRGGBB"; return false;
+    }
+    uint32_t rgb = 0;
+    for (int i = 1; i < 7; ++i) {
+      const char c = color[i];
+      const int digit = c >= '0' && c <= '9' ? c - '0' :
+        c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+      if (digit < 0) { error = "led_color must be #RRGGBB"; return false; }
+      rgb = (rgb << 4) | digit;
+    }
+    candidate.color = rgb;
+  }
+  if (!LightingSettings::valid(candidate)) {
+    error = "dark and bright calibration readings must differ"; return false;
+  }
+  if (memcmp(&candidate, &gLighting, sizeof(candidate)) != 0) {
+    if (!saveLighting(candidate)) { error = "could not save lighting settings"; return false; }
+    gLighting = candidate;
+    gLightingStored = true;
+    gLightingDirty = false;
+  }
   if (server.hasArg("page") && !server.hasArg("auto")) automatic = false;
   selectPage(page, automatic);
-  gBrightness = light;
-  gLedBrightness = leds;
   if (server.hasArg("led_test")) {
     gLedTest = ledTest;
     gLedTestUntil = millis() + 5000;
   }
   gAwake = awake;
-  setBacklight();
+  updateBrightness();
   if (server.hasArg("volume")) AudioDemo::setVolume(volume);
   if (tone) AudioDemo::beep(tone, duration);
   return true;

@@ -1,19 +1,25 @@
-# ColoPLAY hardware demo 0.2.5
+# ColoPLAY firmware 0.3.1
 
 This is the peripheral bring-up stage before feature development. The starting
 device at `http://127.0.0.1:10081/api/status` reported `0.1.3-nvs`, 16 MiB flash,
 no enabled PSRAM, working WiFi and three released buttons. The initial
 `0.2.0-demo` upload reached recovery mode after two hardware-startup panics.
-`0.2.5-rotary` is now installed through HTTP OTA, with its running-image
+`0.3.1-clock-usb` is now installed through HTTP OTA, with its running-image
 MD5 verified. With `0.2.4-factory-led`, the user confirmed the display, speaker,
 ring and four key LEDs work. Key presses and knob movement were also observed
-in telemetry. The panel
-sends approximately 60–66 Hz TE pulses and the UI renders near 20 fps; the
+in telemetry. The panel sends approximately 60–66 Hz TE pulses; hardware
+pages render near 20 fps and the new clock at 5 fps. The
 256 KiB PSRAM pattern test passes. ES8311 ID `0x8311` / revision 1 responds at
 I2C `0x18` with microphone samples and no reported I/O errors. The supply ADC
 reads approximately 5.0–5.2 V on USB and the light ADC returns changing values
 without errors. Internal OPEN / REC switch presses and charging transitions
 were not separately exercised during this session.
+
+Clock and USB networking are described in the [clock and USB guide](clock-and-usb.md).
+The default screen is an Inter clock synchronized by NTP. Its web settings,
+including server and timezone, persist in NVS. CDC-ECM Ethernet and serial/JTAG
+are selectable USB modes in the same firmware and web page. The live USB link
+has issued its single DHCP lease without a gateway or DNS.
 
 ## Rotary notch correction
 
@@ -143,7 +149,7 @@ tone plays after hardware initialization.
 
 | Control | Action |
 |---|---|
-| KEY1 / GPIO6 | Orbit page |
+| KEY1 / GPIO6 | Clock page; Orbit remains available through the web / tour |
 | KEY2 / GPIO1 | Inputs page |
 | KEY3 / GPIO4 | Audio page and short test tone |
 | KEY4 / GPIO5 | Sensors page |
@@ -156,6 +162,31 @@ The web home page provides the same page, brightness, LED and tone controls,
 live telemetry, a render-buffer preview, WiFi provisioning and the OTA link.
 The preview is generated from the framebuffer; it is not optical verification
 or a readback of the physical panel.
+
+The **Lighting** panel offers **Rainbow** and **Static color** LED modes with a
+color picker. Screen, ring and key LEDs have separate 0–100% brightness sliders
+and separate **Auto** checkboxes. All three default to **70%**, with Auto off.
+Settings, LED mode/color and light calibration are saved in NVS across restarts.
+The knob adjusts the selected screen level; knob writes are debounced for 1.5 s.
+
+Auto smoothly dims each selected level between 10% and 100% of that level using
+the ambient-light sensor. Defaults map raw 0 to darkness and raw 1200 to bright
+light. Under **Ambient light → Auto brightness calibration**, capture the dark
+and bright raw readings for your room and save them together; either sensor
+polarity is supported. Failed reads retain the last good measurement. If no
+successful reading arrives for five seconds, Auto falls back to the selected
+manual levels. The UI reports each channel's effective brightness separately.
+
+The **Clock** screen displays only centered hours and minutes. A steady colon
+appears once NTP has synced; before sync there is a gap between hours and minutes.
+There is no date, timezone, seconds, status text or decorative ring on the clock.
+
+The **Ambient light** web panel refreshes every second with the raw 12-bit ADC
+reading, sensor voltage in mV, successful-read and error counts, and the minimum
+and maximum raw readings observed in this browser session. **Reset range** starts
+a new comparison; cover the sensor and then illuminate it to find useful light
+thresholds. Failed, paused, stale or unavailable readings are labelled explicitly;
+the last good value is retained. The displayed values are not calibrated lux.
 
 | Subsystem | Driver and remotely observable evidence |
 |---|---|
@@ -189,12 +220,20 @@ or lux calibration is claimed.
 curl http://127.0.0.1:10081/api/status
 curl -X POST -d 'page=2&auto=0&tone=660&duration=300' http://127.0.0.1:10081/api/demo
 curl -X POST -d 'brightness=65&leds=40&volume=75' http://127.0.0.1:10081/api/demo
+curl -X POST -d 'brightness=70&ring_brightness=70&keys_brightness=70' http://127.0.0.1:10081/api/demo
+curl -X POST -d 'led_mode=static&led_color=%23ff8040' http://127.0.0.1:10081/api/demo
+curl -X POST -d 'auto_screen=1&auto_ring=0&auto_keys=0' http://127.0.0.1:10081/api/demo
 curl -X POST -d 'led_test=1&leds=48' http://127.0.0.1:10081/api/demo
 curl -o screen.bmp http://127.0.0.1:10081/api/screenshot.bmp
 ```
 
 `/api/status` retains the WiFi / button fields and adds `sketch_md5`,
 `running_partition`, `reset_reason`, `recovery_mode` and a `hardware` object.
+Screen brightness and its Auto flag/effective level are in `hardware.display`;
+ring/key levels, their Auto flags/effective levels, mode and color are in
+`hardware.leds`. `hardware.lighting` reports calibration, sensor availability and
+whether settings are stored. New brightness controls use percentages; legacy
+`leds=0..64` still sets both LED groups using the old byte scale.
 Check that the new firmware boots, the PSRAM pattern passes, frame and LED
 counters advance, TE pulses arrive, codec ID is correct and microphone frames
 advance without growing I/O errors. Then verify the visible display / LEDs,
