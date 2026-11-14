@@ -26,6 +26,7 @@ def build_assets():
     paths={};records=[]
     for name,file,mime in [('BOOTSTRAP_CSS','bootstrap.min.css','text/css; charset=utf-8'),
                            ('APP_CSS','app.css','text/css; charset=utf-8'),
+                           ('DROPDOWNS_JS','dropdowns.js','application/javascript; charset=utf-8'),
                            ('APP_JS','app.js','application/javascript; charset=utf-8'),
                            ('SCENE_ICONS','scene-icons.svg','image/svg+xml'),
                            ('PROJECT_ICON','coloplay.svg','image/svg+xml')]:

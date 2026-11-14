@@ -4,6 +4,7 @@
 #include <new>
 #include "scene_icons.h"
 #include "scene_cue.h"
+#include "action_sound.h"
 #include "general_service.h"
 #include "audio_demo.h"
 #include "bluetooth_service.h"
@@ -89,7 +90,7 @@ bool readColor(const String &value,uint32_t &out) {
   }
   out=rgb; return true;
 }
-bool commit(String &error,int direction=0) {
+bool commit(String &error,int direction=0,bool sceneSound=true) {
   if (!valid(gCandidate)) { error="invalid scene, action or effect configuration"; return false; }
   if (!std::memcmp(&gSettings,&gCandidate,sizeof(gSettings))&&!gLevelDirty) return true;
   if (!gOpen||gPrefs.putBytes("settings",&gCandidate,sizeof(gCandidate))!=sizeof(gCandidate)) {
@@ -98,14 +99,14 @@ bool commit(String &error,int direction=0) {
   const int previous=gSettings.active;
   BluetoothService::cancel();
   gSettings=gCandidate; gStored=true;gLevelDirty=false;++gRevision; ++gEpoch; gFeedback.clear();
-  const unsigned cue=SceneCue::frequency(GeneralService::sceneChangeSound(),previous,gSettings.active,direction);
+  const unsigned cue=SceneCue::frequency(sceneSound&&GeneralService::sceneChangeSound(),previous,gSettings.active,direction);
   if(cue)AudioDemo::beep(cue,SceneCue::kDurationMs);
   return true;
 }
-bool activate(int id,int direction=0) {
+bool activate(int id,int direction=0,bool sceneSound=true) {
   if (!exists(gSettings,id)) return false;
   gCandidate=gSettings; gCandidate.active=id;
-  return commit(gError,direction);
+  return commit(gError,direction,sceneSound);
 }
 String list(const char *const *names,int count) {
   String out="["; for (int i=0;i<count;++i) { if (i) out+=','; out+=quote(names[i]); } return out+"]";
@@ -117,7 +118,8 @@ void begin(Handler handler) {
   const size_t bytes=gOpen?gPrefs.getBytesLength("settings"):0;
   if(bytes==sizeof(gSettings)&&gPrefs.getBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings)){
     if(valid(gSettings)){gStored=true;return;}
-    if(migrateV4(gSettings)||migrateV3(gSettings)){gStored=gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);if(!gStored)gError="could not persist migrated scenes";return;}
+    const bool sound=GeneralService::sceneChangeSound();
+    if(migrateV5(gSettings,sound)||migrateV4(gSettings,sound)||migrateV3(gSettings,sound)){gStored=gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);if(!gStored)gError="could not persist migrated scenes";return;}
   }
   // The two legacy layouts share one scratch area, avoiding permanent duplication.
   union Legacy { StoredV1 v1;StoredV2 v2;Legacy():v2(){} };
@@ -125,10 +127,10 @@ void begin(Handler handler) {
   bool migrated=false;
   if(bytes==sizeof(StoredV2)) {
     new (&legacy.v2) StoredV2;
-    migrated=gPrefs.getBytes("settings",&legacy.v2,sizeof(legacy.v2))==sizeof(legacy.v2)&&migrateV2(legacy.v2,gSettings);
+    migrated=gPrefs.getBytes("settings",&legacy.v2,sizeof(legacy.v2))==sizeof(legacy.v2)&&migrateV2(legacy.v2,gSettings,GeneralService::sceneChangeSound());
   } else if(bytes==sizeof(StoredV1)) {
     new (&legacy.v1) StoredV1;
-    migrated=gPrefs.getBytes("settings",&legacy.v1,sizeof(legacy.v1))==sizeof(legacy.v1)&&migrate(legacy.v1,gSettings);
+    migrated=gPrefs.getBytes("settings",&legacy.v1,sizeof(legacy.v1))==sizeof(legacy.v1)&&migrate(legacy.v1,gSettings,GeneralService::sceneChangeSound());
   }
   if(migrated){gStored=gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);if(!gStored)gError="could not persist migrated scenes";return;}
 
@@ -209,7 +211,7 @@ String configJson() {
       for (int n=0;n<b.count;++n) {
         if (n) out+=','; const auto &a=b.actions[n];
         out+="{\"type\":"+quote(kTypes[a.type])+",\"value\":"+String(a.value)+",\"target\":"+String(a.target);
-        out+=",\"led\":"+quote(kLeds[a.led])+",\"screen\":"+quote(kScreens[a.screen])+",\"color\":"+color(a.color)+",\"feedback_ms\":"+String(a.feedbackMs)+"}";
+        out+=",\"led\":"+quote(kLeds[a.ledEffect()])+",\"sound\":"+String(a.soundEnabled()?"true":"false")+",\"screen\":"+quote(kScreens[a.screen])+",\"color\":"+color(a.color)+",\"feedback_ms\":"+String(a.feedbackMs)+"}";
       }
       out+="]}";
     }
@@ -295,11 +297,13 @@ bool configure(WebServer &server,String &error) {
       if (server.hasArg(prefix+"screen")) screen=index(server.arg(prefix+"screen"),kScreens,kScreenCount);
       if (type<0||led<0||screen<0) { error="invalid action or effect"; return false; }
       a.type=type; a.led=led; a.screen=screen;
-      int value=0,target=0,duration=1500;
+      int value=0,target=0,duration=1500,sound=0;
       if (!number(server,(prefix+"value").c_str(),-100,4000,value,error)||
           !number(server,(prefix+"target").c_str(),0,type==kBluetoothKey?255:kSceneCount-1,target,error)||
-          !number(server,(prefix+"feedback_ms").c_str(),250,10000,duration,error)) return false;
+          !number(server,(prefix+"feedback_ms").c_str(),250,10000,duration,error)||
+          !number(server,(prefix+"sound").c_str(),0,1,sound,error)) return false;
       a.value=value; a.target=target; a.feedbackMs=duration;
+      a.setSound(sound);
       if (server.hasArg(prefix+"color")&&!readColor(server.arg(prefix+"color"),a.color)) { error="color must be #RRGGBB"; return false; }
       if (!validAction(gCandidate,a)) { error="invalid action value, scene target or proportional effect"; return false; }
     }
@@ -330,14 +334,17 @@ void event(int input,int gesture,int repetitions) {
   const auto previousEpoch=gEpoch;
   for (int i=0;i<b.count;++i) {
     const Action a=b.actions[i]; gLastType=a.type;
-    if (a.type==kSwitchScene) activate(a.target);
+    const int previousScene=gSettings.active;
+    if (a.type==kSwitchScene) activate(a.target,0,false);
     else if (a.type==kNextScene||a.type==kPreviousScene) {
       const int direction=a.type==kNextScene?1:-1;
       for (int n=1;n<=kSceneCount;++n) {
         const int id=(int(gSettings.active)+direction*n+kSceneCount)%kSceneCount;
-        if (exists(gSettings,id)) { activate(id,direction); break; }
+        if (exists(gSettings,id)) { activate(id,direction,false); break; }
       }
     } else if (gHandler) gPercent=gHandler(a,repetitions);
+    const unsigned cue=gError.isEmpty()?ActionSound::frequency(a,previousScene,gSettings.active):0;
+    if(cue)AudioDemo::beep(cue,ActionSound::duration(a));
     gFeedback.apply(a,gPercent,millis());
     if (a.type==kSwitchScene||a.type==kNextScene||a.type==kPreviousScene||gEpoch!=previousEpoch||!gError.isEmpty()) break;
   }

@@ -7,7 +7,7 @@ This reference describes the current implementation in
 [scene_service.cpp](../firmware/src/scene_service.cpp),
 [clock_service.cpp](../firmware/src/clock_service.cpp) and
 [usb_network.cpp](../firmware/src/usb_network.cpp).
-The current release is **0.6.4-smooth-progress**; deployment fingerprints are in the
+The current release is **0.6.6-input-sampling**; deployment fingerprints are in the
 [release record](development.md#current-verified-release). Bluetooth's BLE wire
 contract and Tab5 setup are documented in the [integration guide](tab5-integration.md).
 Serial companion framing remains proposed.
@@ -94,14 +94,16 @@ web interface no longer requests display images.
 ## General preferences
 
 `GET /api/general` and `status.general` return `scene_change_sound` (boolean,
-default true), `sleep_timeout_minutes` (integer, default 60) and `stored`.
-POST accepts either or both of `scene_change_sound=0|1` and
+default true), `sound_volume` (integer 0–100, default 70),
+`sleep_timeout_minutes` (integer, default 60) and `stored`. POST accepts any of
+`scene_change_sound=0|1`, `sound_volume=0..100` and
 `sleep_timeout_minutes=0..1440`. Omitted fields retain their saved values;
 empty/invalid requests return 400 without changing either setting. Sleep value
 0 disables the timer. Save happens before apply. Changing the timeout restarts
 its countdown; polling status does not. Physical buttons/knob reset inactivity
 and wake the outputs; held buttons prevent inactivity sleep. The sound flag
-controls scene transitions only. `hardware.audio.last_tone_hz` and
+controls scene transitions made through the web/API. Binding-triggered scene
+changes use the action’s own `sound` flag. `hardware.audio.last_tone_hz` and
 `last_tone_duration_ms` describe the last successfully written tone; startup and
 manual audio tests also update those fields. Next/Previous cues are 880/440 Hz
 for 90 ms and keep their direction at wraparound.
@@ -124,7 +126,7 @@ gesture/action/effect `catalog`, and `scenes`. Each scene has a stable numeric
 `id`, `name`, `protected`, `standby_screen`, `ring_mode`, `ring_color`,
 `keys_mode`, `keys_color`, and sparse `bindings` list. Each
 binding contains `input`, `gesture`, `global` and an ordered `actions` array. NVS stores
-one version-3, 3304-byte record: 8 scenes, 64 configured gestures and up to 3
+one version-6, 3304-byte record: 8 scenes, 64 configured gestures and up to 3
 actions per gesture. The active scene is persistent.
 
 Ring and key LED modes independently accept `general`, `rainbow` or `static`;
@@ -196,7 +198,7 @@ Inputs are `key1`, `key2`, `key3`, `key4`, `knob`, `open`, `rec`. All support
 binding, not the physical recognizer; see [gesture semantics](firmware.md#gestures).
 
 For each action index 0–2 send `a0_type`, `a0_value`, `a0_target`, `a0_led`,
-`a0_screen`, `a0_color`, `a0_feedback_ms` (then `a1_…`, `a2_…` as needed):
+`a0_screen`, `a0_color`, `a0_feedback_ms`, `a0_sound` (then `a1_…`, `a2_…` as needed):
 
 | Field | Values |
 |---|---|
@@ -204,6 +206,7 @@ For each action index 0–2 send `a0_type`, `a0_value`, `a0_target`, `a0_led`,
 | `value` | Adjustments -100…100 per step; setters 0…100%; tone 100…4000 Hz |
 | `target` | Existing scene ID for `switch_scene` |
 | `led` | `inherit`, `proportional`, `rainbow`, `static`, `off` |
+| `sound` | `0` (off, default) or `1` (on); JSON returns a boolean |
 | `screen` | `unchanged`, `clock`, `blank`, `bluetooth_volume`, `bluetooth_playback` |
 | `color` | `#RRGGBB`; initial effect color `#40ffaa` |
 | `feedback_ms` | 250…10000; default 1500 |
@@ -214,6 +217,16 @@ lighting. Other LED effects affect both groups at their configured brightness.
 Temporary effects expire back to General lighting and the scene's standby
 screen. Screen overrides route through the scene service; Clock, Blank and both Bluetooth screens are
 implemented. Scene switching ends the gesture's action list.
+Each enabled action produces a nonblocking local cue: ordinary actions use 660 Hz
+for 50 ms, scene changes retain the 880/440 Hz next/previous cue for 90 ms, and
+`tone` uses its configured frequency for 200 ms. Sound off also silences `tone`
+and binding-triggered scene changes. General `sound_volume` applies to all cues;
+0% mutes them. A scene action that leaves the scene unchanged is silent.
+Scene schema 5 migrates to 6 without growing the record or changing other saved
+fields: existing `tone` actions keep sound on, scene actions inherit the current
+General scene-sound preference once, and other actions start off. Older v1–v4
+records migrate through the same rules. Send `aN_sound` explicitly when saving a
+complete binding; omission means off, including for `tone`.
 Desktop Serial integration is deferred; Bluetooth Tab5 integration is implemented.
 
 ```bash
@@ -404,6 +417,11 @@ Bluetooth binding parameters:
 | `bluetooth_media` | Consumer usage: Play 176, Pause 177, Fast Forward 179, Rewind 180, Next 181, Previous 182, Stop 183, Play/Pause 205, Mute 226 | 0 pulse/tap, 1 start seeking, 2 stop seeking; nonzero only for Forward/Rewind |
 | `bluetooth_key` | Keyboard usage 1–231 | Modifier mask 0–255 |
 
+The web editor presents the modifier mask as a multi-select dropdown with
+removable tags. The API still uses the numeric `aN_target` mask: left Control,
+Shift, Alt and GUI are 1/2/4/8; right variants are 16/32/64/128. Combine bits
+with OR; 0 means no modifiers.
+
 `screen=bluetooth_volume|bluetooth_playback` attaches remote screens;
 `led=proportional` is allowed on Bluetooth volume. Both screens can be idle
 behaviors. Tab5 accepts only its supported unmodified navigation usages; other
@@ -467,3 +485,24 @@ Explicit seek state, pause/resume, new track, reconnect and inferred position
 jumps of at least two seconds reset to the reported position. Stalled source
 samples cap extrapolation after three seconds; link freshness expires after
 five seconds. Raw MPD data, BLE protocol, NVS schemas and Tab5 firmware are unchanged.
+
+## Independent input sampling and trace (0.6.6)
+
+`hardware.inputs` reports the dedicated input worker's `ready`, target
+`sample_period_ms` (1), `samples`, `max_sample_gap_us`, and `queue_drops`.
+Sampling/gesture recognition run in a priority-3 task; a bounded 64-event queue
+hands actions to the main loop. Scene/binding generations discard stale events.
+Overflow cancels pending input and remote seeking; OTA pause disables bindings
+and clears queued actions. All settings/schema and Tab5 firmware are unchanged.
+
+Debounce is still 25 ms and click separation 300 ms. A second raw press that
+begins within the click window keeps the first click pending while debounce
+completes; short rejected glitches cannot postpone the timeout indefinitely.
+
+`GET /api/input-trace` reads a bounded 256-record RAM trace for Button 2.
+Records include microsecond timestamps, raw GPIO IRQ edges, sampled raw state,
+debounced state, recognized gestures and long sampling gaps near input activity.
+`POST /api/input-trace` with `op=clear` resets the trace and sampling timing
+statistics. Capture is memory-only, without serial or NVS writes; data is lost
+on reboot and older records are overwritten. This is diagnostic telemetry, not
+an input-injection endpoint.

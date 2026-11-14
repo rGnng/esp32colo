@@ -1,6 +1,6 @@
 # Desktop gadget guide
 
-Current baseline: **0.6.4-smooth-progress**. The gadget is configured through the **General**,
+Current baseline: **0.6.13-plain-labels**. The gadget is configured through the **General**,
 **Scenes** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
 buttons are 14 px, with larger headings and log text. [API](api.md), [development](development.md), and
@@ -79,11 +79,18 @@ Readings are not lux, and custom ADC scaling is not factory hardware evidence.
 
 ### Sound
 
-**Scene change sound** enables a short cue when the active scene changes.
-Next scene uses a higher tone (880 Hz), Previous a lower tone (440 Hz), including
-wraparound. Direct scene selection follows numeric scene order. Cues last
-90 ms. The switch defaults on and is saved to NVS. Boot, unchanged selection
-and failed saves are silent.
+**Scene change sound** enables cues for scene selection through the web/API.
+Every action in the key-binding editor has its own **Sound** on/off switch,
+saved with the action. This also controls binding-triggered scene cues and
+**Play tone**: turning Sound off silences either. Ordinary actions use a short
+660 Hz, 50 ms cue. Next/Previous use 880/440 Hz for 90 ms, including wraparound;
+direct scene selection follows numeric scene order. Play tone uses its chosen
+frequency for 200 ms. Unchanged selection and failed scene saves are silent.
+All cues use **General → Sound → Sound effects volume**; 0% is silent.
+
+New actions start with Sound off; choosing Play tone enables it. Existing tone
+and scene cues retain their behavior during migration, while other actions
+start off. Each action can be changed independently, including Global bindings.
 
 ### Sleep
 
@@ -128,7 +135,7 @@ leaves the button group's scene color in place.
 
 Existing v1/v2 scenes migrate without changing their names, colors, bindings or
 selection. New brightness overrides start at Use General, icons start at House,
-and existing bindings are not made Global automatically. The version-3 scene
+and existing bindings are not made Global automatically. The version-6 scene
 record is 3304 bytes; older firmware cannot read it, so an application downgrade
 is not a scene-settings rollback.
 
@@ -167,7 +174,8 @@ Available events are:
 | Center knob press | Single, double, triple, hold, hold then release |
 | Center knob rotation | Left, right, press + left, press + right |
 
-Inputs debounce for 25 ms. Recognition uses the active scene's bindings and
+Inputs are sampled by a dedicated task targeting 1 ms, independently of LCD/web
+work, and debounce for 25 ms. Recognition uses the active scene's bindings and
 Global Default bindings. A single-only input fires on debounced press. If Hold
 or Hold then release is configured, a short single fires on release; a hold is
 tracked only when one of those bindings exists and reaches its threshold at
@@ -306,10 +314,36 @@ status dumps and OTA progress remain serial-only, keeping useful event history
 in the bounded buffer. Firmware-upload logs from the separate HTTP OTA module
 also remain serial-only.
 
+### Notifications
+
+Save confirmations, unsaved changes and errors appear to the right of their
+panel or dialog title. That space stays reserved when empty, keeping the window
+and controls still. Binding conflicts and Global-binding warnings share the
+binding title area. Long messages scroll inside the fixed area; their text is
+retained. The firmware updater and log status also use title-side notifications.
+
+### Dropdown menus
+
+Dropdowns use the same local dark styling throughout General, Scenes and the
+binding editor. Longer lists, including timezones and grouped commands, include
+**Search options**. Choose with a mouse/touch or use arrows, Home/End and
+Enter/Space. Escape closes the menu; Tab continues through the form. Menus fit
+above or below the field inside the screen. Modifier multi-selection still
+uses checkboxes and removable tags. Saved values are unchanged.
+
+### Keyboard modifiers
+
+Bluetooth HID key actions use a multi-select dropdown for **Keyboard modifiers**.
+Choose any combination of Control, Shift, Alt/Option and Windows/Command, with
+left and right variants. Selections appear as removable tags; click × to remove
+one. No selections displays **None**. The underlying 0–255 HID mask is saved as
+before. The dropdown supports keyboard arrows, Space to toggle and Escape to
+close; it needs no external JavaScript library.
+
 ## Ordered combination modifiers and playback display
 
 In the binding editor, choose a Button combination, select its buttons, then
-choose **Modifier · press first**. **None · any order** preserves the existing
+choose **Modifier (press first)**. **None (any order)** preserves the existing
 combination behavior. A modifier must go down first; press both together to
 match only an Any order binding. Hold the modifier and tap another member to
 repeat without releasing it. Reversed pairs can be configured independently.
@@ -328,3 +362,10 @@ the LED ring can also show progress. Unavailable feedback uses only the local
 scene-switch sounds. It defaults to 70%; zero mutes tones. Remote playback volume
 and the gadget codec speaker setting remain independent. See the
 [Tab5 scene mapping](tab5-integration.md#installed-test-profile).
+
+The double-click window is 300 ms. A second press starting inside that window
+is allowed to finish debouncing before the first click is resolved. Unmapped
+Double/Triple actions still add no waiting; held modifier combinations retain
+their existing behavior. The Device telemetry includes sampling gaps and queue
+drops, and the API has a bounded Button 2 edge trace for diagnosing physical
+presses. A single action may wait for Double when that binding is configured.

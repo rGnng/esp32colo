@@ -212,8 +212,10 @@ finding does not generalize to other checksum failures.
 
 ## Bluetooth test recovery
 
-The 0.6.1 migration writes scene version 5 and General version 3 records. Prefer disabling Bluetooth
-over downgrading to pre-Bluetooth firmware, which cannot read those records.
+Current builds (0.6.7 and later) write scene version 6 and General version 3 records.
+Use a version-6-capable image to preserve saved scenes during recovery. The
+0.6.1–0.6.6 builds used scene version 5 and cannot read the new action sound
+flags. Prefer disabling Bluetooth over downgrading firmware.
 The existing two-failed-start guard keeps WiFi/HTTP OTA available in recovery.
 Send `POST /api/bluetooth` with form `op=disable`, then use the authenticated
 `POST /api/hardware/retry` to restart hardware. Keep the same OTA admin password.

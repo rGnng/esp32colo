@@ -15,5 +15,11 @@ int main() {
  led.feedbackMs=500;f.apply(led,75,0xFFFFFFF0u);assert(f.snapshot(0xFFFFFFF0u+499).percent==75);assert(!f.snapshot(0xFFFFFFF0u+500).active);
  f.apply(screen,-1,100);f.clear();assert(!f.snapshot(101).active);
  f.apply(led,40,100);led.led=kFeedbackStatic;f.apply(led,-1,200);assert(f.snapshot(201).led==kFeedbackStatic);
+ // Audio flags must never appear as LED effects or break remote progress.
+ for(int effect=0;effect<kLedCount;++effect){
+   f.clear();led.type=kBluetoothVolume;led.led=effect;led.setSound(true);
+   f.apply(led,42,100);state=f.snapshot(101);
+   assert(state.led==effect&&state.remote==(effect==kProportional));
+ }
  std::cout<<"PASS independent screen/LED overlays, original deadlines, inheritance, replacement, zero, clear and rollover\n";
 }

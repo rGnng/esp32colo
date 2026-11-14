@@ -10,16 +10,17 @@ Bluetooth controls, pairing and the bidirectional media-state contract are in th
 ## Current verified release
 
 Application-only OTA on **2026-11-14** deployed the tested integration below.
-The source changes are committed with this release record; base commits and
-artifact fingerprints identify the tested builds.
+This release includes the input, sound and configuration-editor changes built
+on `4574a84`. Source history and the artifact fingerprints below identify the
+tested builds.
 
 | Item | Recorded value |
 |---|---|
-| ColoPlay firmware | `0.6.4-smooth-progress`, based on `06b4e8c` |
-| ColoPlay application bytes | 4,071,040 |
-| Running image MD5 | `a128460cf665ea78212086fda1f118e6` |
-| Application SHA-256 | `e3865a18d482a8e6c3052160d1999c4a1e616edd443a27ae212e2123fdb6e7aa` |
-| OTA slot | `ota_app0` |
+| ColoPlay firmware | `0.6.13-plain-labels`, based on `4574a84` |
+| ColoPlay application bytes | 4,087,360 |
+| Running image MD5 | `4d8b5d294e07f65e99596f89222cf514` |
+| Application SHA-256 | `36eca76a546c16b8be373065700766ae899dfaf2760207a3026a40f32614c895` |
+| OTA slot | `ota_app1` |
 | Tab5 BLE source | [`79c5dac`](https://github.com/rGnng/mpdtab5/commit/79c5dacd1f38a955f3ea2a8abff5b719d5d616d3) |
 | Tab5 base | `a34fa8a2c7547573f128b47061d7359f3f504a81` |
 | Tab5 application bytes | 2,842,400 |
@@ -738,3 +739,220 @@ settings and unchanged Tab5 application hash with MPD/SD healthy. Sampling made
 captured pair retained raw `60066` ms while display position advanced from
 `59927` to `60973` ms. Refresh remained **19.4 fps**; no panic was recorded.
 These are software position samples, not a physical high-speed LCD/LED recording.
+
+## Button 2 missed double presses (0.6.5 diagnostic / 0.6.6 fix)
+
+The physical GPIO trace showed stable presses/release gaps of about 46–106 ms,
+with Button 2 sampling gaps commonly 37–40 ms and up to 60.6 ms during LCD
+refreshes. Some real 50–65 ms presses were sampled down once and released before
+a later observation could confirm 25 ms debounce. They disappeared before click
+classification, explaining Single or no event despite two physical presses.
+Captured switch chatter was sub-millisecond; lowering debounce was unnecessary.
+
+A separate simulation reproduced a click-deadline bug: a second press starting
+inside the 300 ms window could finish debounce after it and produce two singles.
+The recognizer now retains a timely candidate through debounce/bounce and uses
+its onset time; a rejected glitch clears the candidate after stable release.
+
+`InputWorker` owns GPIO/PCNT sampling, ChordEngine and RotaryDetents in a 4096-byte
+priority-3 task on the Arduino core, targeting 1 ms intervals. Rendering, BLE,
+HTTP, NVS and action dispatch remain outside that task. A 64-entry RTOS queue
+contains generation-tagged gestures; the main loop rejects stale generations
+on settings/scene changes. Worker-owned press/activity counters preserve short
+cycles even while main is busy. Sleep/wake, encoder detents, ordered modifiers,
+Global bindings and conditional gesture delays retain their existing policies.
+OTA pause disables recognition bindings and discards pending actions; queue
+saturation reports a counter and cancels pending remote holds before resync.
+
+`InputTrace` retains 256 Button 2 raw IRQ/sample/debounced/gesture/gap records in
+RAM, without serial formatting or flash writes in the capture path. Reading it
+copies a bounded snapshot. Clearing it resets worker sampling timing statistics.
+The diagnostic 0.6.5 app deliberately kept the original timing/behavior.
+
+The production worker test replays all eight complete double-press pairs from
+the physical capture through its actual run loop at 1 ms while main consumes no
+events; all eight become Double and all 16 presses are counted. Additional RTOS
+boundary cases cover generation changes, held modifiers across reconfiguration,
+OTA-style pause/resume without replay, queue saturation/discard, encoder
+press-turns, and allocation/task-start failures. Gesture tests cover timely,
+bouncing, rejected and genuinely late second presses at the 300 ms deadline.
+Both firmware environments and the complete host suite pass. Evidence is under
+ignored `backups/button-double-investigation/`; the sanitized GPIO capture is
+checked in as `tests/fixtures/key2_double_trace.json`.
+
+## Per-action sound (0.6.7)
+
+Every ordered binding action now has an independent Sound switch in its editor
+header and a Sound on summary in the binding table. It survives editing,
+duplication and reordering. The API returns a boolean `sound` and accepts
+`aN_sound=0|1`; omission on a complete binding replacement means off. Choosing
+Play tone in the editor enables its switch; other new actions begin off.
+
+Scene schema 6 retains the 3304-byte record and 12-byte action layout by using
+bit 7 of the action's LED byte for audio. LED validation, rendering feedback and
+JSON use the masked LED effect. Reserved bits remain invalid. The v5 migration
+validates the entire old record before applying any flags, preserves every
+other field, enables existing Tone actions, and transfers General's current
+scene-cue preference to existing scene actions once. The v1–v4 migrations use
+the same rules. Recovery images must support scene schema 6 to preserve scenes.
+General's record and the Bluetooth protocol are unchanged.
+
+SceneService gates audio once per action, including Tone and scene changes.
+Ordinary actions use 660 Hz for 50 ms; Tone uses its selected frequency for
+200 ms. Scene actions retain 880/440 Hz for 90 ms and suppress the separate
+General scene cue to avoid duplicate audio or an Off action still beeping.
+Unchanged/failed scene changes are silent. General's scene-cue switch applies
+to web/API selection; its sound volume controls all generated cues. The existing
+nonblocking audio task handles requests, without delaying the input worker.
+
+Both firmware environments and the host suite pass, including sound gating,
+wraparound direction, LED isolation, strict flag validation and legacy
+migration. An offline browser check covered independent switches in three
+operations (edit, duplicate and reorder), save/reopen/reload, and 320–1440 px
+layouts with no JavaScript errors or external asset requests. Live saved-binding
+execution verified ordinary, Tone, Next, Previous and direct scene actions both
+on and off, correct frequency/duration/volume, silent unchanged selection, and
+rejection of invalid flags without modifying saved settings. Evidence and the
+frozen application are under ignored `backups/action-sound/release/`.
+
+A reboot retained three independent on/off/off action flags and unchanged General
+settings. The temporary scene was removed and the original active scene restored.
+The application MD5 matched the frozen image, boot attempts cleared to zero,
+Bluetooth feedback reconnected, and audio I/O errors and input queue drops stayed
+at zero. Display refresh remained 19.7 fps.
+
+
+## Modifier multi-select (0.6.8)
+
+The Bluetooth keyboard editor replaces the decimal modifier input with a local
+multi-select dropdown. Eight left/right Control, Shift, Alt/Option and GUI
+choices toggle independently. Selected values appear as removable tags; an
+empty selection displays None. Binding summaries use modifier names. The same
+`target` byte is saved, preserving all existing masks and NVS schema 6.
+
+The control uses native buttons and checkboxes, closes on outside click/focus
+or Escape, and supports arrows/Home/End plus Space for keyboard selection.
+Escape closes an open dropdown before the binding dialog. No Bootstrap JS,
+CDN or additional library is required. Independent action editors keep their
+own selection; opening one closes the other menus. Browser checks cover all
+eight modifier bits combined, clear to zero, tag removal, keyboard controls,
+save/reopen/reload, duplicate/reorder and offline 320–1440 px layouts.
+
+Both firmware builds passed. Application-only OTA matched the frozen image MD5,
+cleared boot attempts, and reconnected Bluetooth feedback. All saved scenes,
+bindings and General settings matched the pre-update snapshot. The device-served
+dropdown was exercised on desktop and mobile without submitting any settings
+writes. Evidence: ignored `backups/modifier-select/release/`.
+
+
+## Title-side notifications (0.6.9)
+
+Settings panels, the scene editor, binding/WiFi/scene-name dialogs, log view and
+firmware updater reserve notification space to the right of their title. Empty,
+short and long messages keep the same dimensions. Long messages scroll within
+the reserved area instead of resizing the panel. The binding's conflict and
+Global-binding notices share its title area; all source text and save-blocking
+rules are retained. Local operation results route to the corresponding panel or
+open dialog instead of appearing behind the modal. No settings schema changes.
+
+Offline browser checks at 320/375/768/1440 px compare dialog bounds, form fields,
+action-list position, and save-button bounds through empty/unsaved/error and
+warning states. They also compare panel/updater geometry through long messages
+and exercise real save handlers with mocked success/error responses. No changes
+in geometry, JavaScript errors or external asset requests were observed.
+
+Both firmware environments built successfully. Application-only OTA matched the
+frozen MD5, cleared boot attempts and reconnected Bluetooth feedback. Scenes,
+bindings and General settings matched their pre-update snapshots. A browser
+using the actual device compared desktop/mobile dialog and control geometry
+through unsaved and long-error states, then cancelled without settings writes.
+Evidence: ignored `backups/title-notices/release/`.
+
+
+## Scene tab borders (0.6.10)
+
+The scene strip overlaps the panel border by one pixel. The selected tab's
+bottom border matches the panel background, joining the tab to its content;
+inactive tabs retain the shared border. Horizontal scrolling remains available
+without a scrollbar separating the tabs from the panel. A browser check covers
+first/later selected tabs at 320/375/768/1440 px, matching border/background colors,
+one-pixel overlap and no page overflow. No settings or action behavior changed.
+
+Both firmware builds passed. Application-only OTA matched the frozen MD5;
+boot attempts cleared and Bluetooth feedback reconnected. Saved scenes,
+bindings and General settings matched their snapshots. The device-served page
+confirmed the selected-tab join on desktop/mobile without settings writes.
+Evidence: ignored `backups/scene-tabs/release/`.
+
+
+## Modifier row selection (0.6.11)
+
+Clicking modifier text could focus the containing dialog during pointer-down.
+The generic focus-out handler immediately closed the menu, so pointer-up landed
+on the form underneath and no checkbox toggle occurred. Focus on the dialog
+itself is now ignored by that handler; actual outside controls and clicks still
+close the menu. Labels explicitly forward text/padding clicks to the checkbox,
+with direct checkbox clicks excluded to prevent double toggles. Selected rows
+are highlighted and remain synchronized with removable tags and the saved mask.
+No settings schema or BLE protocol change is required.
+
+Browser checks click each modifier’s text, row padding and checkbox, covering
+all eight bits and verifying one toggle per click, selected highlights, keyboard
+Space, saving and reopening. Mouse at 375/1440 px and touch text taps at 375 px
+pass. Both firmware environments build successfully.
+
+Application-only OTA matched the frozen MD5; hardware was ready, boot attempts
+cleared and Bluetooth feedback reconnected. Existing scenes/bindings and General
+settings matched their snapshots. A browser using the device-served page clicked
+modifier text, checked highlights/tags and cancelled without any settings writes.
+Evidence: ignored `backups/modifier-rows/release/`.
+
+
+## Custom dropdowns throughout configuration (0.6.12)
+
+A local browser component now draws every visible single-select dropdown:
+USB mode, timezone, General lighting, scene screens/lighting/brightness,
+binding input/event/modifier, commands and command-specific choices. The
+existing modifier multi-select and scene icon picker remain custom controls.
+Hidden native selects preserve FormData, saved values and existing input/change
+handlers. Programmatic value assignment, rebuilt options/optgroups and disabled
+fieldsets synchronize the visible trigger; action rebuilds restore its focus.
+
+Menus live in their owning dialog or the document and use viewport positioning,
+with automatic above/below placement. Keyboard focus scrolls only the option
+list, preserving page position. Outside focus/click and Escape close menus;
+Tab resumes form navigation. Longer lists include local search and retain group
+headings. Rendering, search and event handling run entirely in the browser.
+The extra JavaScript is about 3.4 KB gzip in flash; no library/CDN, new device
+polling, NVS schema or Bluetooth protocol change is introduced.
+
+Offline browser checks at 320/375/768/1440 px cover every static/dynamic select,
+timezone and command groups/search, no-match results, value synchronization,
+disabled fieldsets, keyboard/Escape/Tab, popup bounds, modifier-menu coexistence,
+scene saves, ordered binding serialization and reopen. A mobile touch context
+is included. No JavaScript errors or external resource requests were observed.
+
+Both firmware environments built successfully. Application-only OTA matched
+the frozen MD5, cleared boot attempts and reconnected Bluetooth feedback.
+Saved scenes/bindings, General, NTP/timezone and USB settings matched their
+pre-update snapshots. The device-served controls passed timezone search, grouped
+commands, dynamic Bluetooth parameters and desktop/mobile popup checks; edits
+were cancelled with no settings writes. Evidence: ignored
+`backups/custom-dropdowns/release/`.
+
+
+## Plain interface labels (0.6.13)
+
+Removed middle-dot separators from all authored interface strings: page titles,
+labels, action groups, step choices, summaries, tooltips, status/diagnostic text
+and the updater. Wording uses plain labels, contextual descriptions and normal
+sentences. The connection footer displays its existing values on separate lines.
+Related guide labels and the web wording policy are updated. User-provided
+scene names and track metadata remain unchanged; no settings migration occurs.
+
+Both builds and desktop/mobile dropdown checks passed. Application-only OTA
+matched the frozen image, cleared boot attempts and reconnected Bluetooth.
+The device-served script and page title contain no middle-dot separators.
+Scenes/bindings and General settings matched their pre-update snapshots; live
+UI edits were cancelled without settings writes. Evidence: ignored
+`backups/plain-labels/release/`.

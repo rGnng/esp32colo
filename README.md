@@ -13,8 +13,7 @@ development. The build target and default hostname remain `coloplay`.
 
 ## Current baseline
 
-Current firmware: **`0.6.4-smooth-progress`**, built on `06b4e8c` with the Bluetooth
-integration. Tab5 changes build on **`a34fa8a`** and reuse its MPD volume logic.
+Current firmware: **`0.6.13-plain-labels`**, built on `4574a84` with independent input sampling, click-boundary fixes, per-action sound switches, a modifier multi-select and fixed title-side notifications. Tab5 changes build on **`a34fa8a`** and reuse its MPD volume logic.
 Both devices are updated by application-only OTA. Validation details and image
 fingerprints are in the [release record](docs/development.md#current-verified-release).
 The working firmware provides:
@@ -27,12 +26,15 @@ The working firmware provides:
 - Compact Bootstrap dark configuration: General, Scenes and Device pages,
   served locally over WiFi or USB CDC-ECM, plus selectable USB serial/JTAG.
   Includes SSID/status/RSSI/IP, an SSID/password editor and a web log viewer.
+  All dropdowns use local custom controls, with search for long timezone/action lists.
 - Application-only HTTP OTA and ArduinoOTA through the preserved factory bootloader.
 - Persistent scenes with customizable button/knob gestures, simultaneous button
   combinations, Global Default bindings and ordered actions. Unused multi-click/hold
   gestures add no delay; a held common key can anchor repeated combinations.
 - Per-scene brightness/Auto overrides and a local 32-icon picker; scene switches
   briefly show the icon and name on the display, with optional direction-specific sound cues.
+  Every binding action has a saved Sound switch using the General sound-effects volume.
+  Bluetooth keyboard modifiers use a dropdown with multiple selections and removable tags.
   Default is protected; idle screens can show Clock or Blank.
 - Inactivity sleep turns off the display and LEDs after one hour by default,
   with a saved timer and wake on any button press or knob turn. Set the timer

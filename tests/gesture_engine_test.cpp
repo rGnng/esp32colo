@@ -33,5 +33,13 @@ int main(){
  {Simulation s;GestureBindings b;b.physical[kKnob]=(1u<<kSingle)|(1u<<kPressRight);s.engine.setBindings(b.physical);s.set(kKnob,true);s.step(25);assert(s.events.empty());s.step(0,1);s.set(kKnob,false);s.step(25);assert(s.events.size()==1&&s.events[0].gesture==kPressRight);}
  // Triple-only drops shorter sequences but resolves the third release immediately.
  {Simulation s;GestureBindings b;b.physical[kKey1]=1u<<kTriple;s.engine.setBindings(b.physical);s.tap(kKey1);s.step(300);assert(s.events.empty());s.tap(kKey1);s.tap(kKey1);s.tap(kKey1);assert(s.events.size()==1&&s.events[0].gesture==kTriple);}
+ // A second physical press before the deadline survives its debounce interval.
+ {Simulation s;GestureBindings b;b.physical[kKey2]=(1u<<kSingle)|(1u<<kDouble);s.engine.setBindings(b.physical);s.tap(kKey2);s.step(270);s.set(kKey2,true);s.step(10);assert(s.events.empty());s.step(15);s.step(40);s.set(kKey2,false);s.step(25);assert(s.events.size()==1&&s.events[0].gesture==kDouble);}
+ // Bounce across the deadline preserves the timely first candidate edge.
+ {Simulation s;GestureBindings b;b.physical[kKey2]=(1u<<kSingle)|(1u<<kDouble);s.engine.setBindings(b.physical);s.tap(kKey2);s.step(270);s.set(kKey2,true);s.step(5);s.set(kKey2,false);s.step(10);s.set(kKey2,true);s.step(25);assert(s.events.empty());s.step(40);s.set(kKey2,false);s.step(25);assert(s.events.size()==1&&s.events[0].gesture==kDouble);}
+ // A short rejected glitch cannot hold the pending single indefinitely.
+ {Simulation s;GestureBindings b;b.physical[kKey2]=(1u<<kSingle)|(1u<<kDouble);s.engine.setBindings(b.physical);s.tap(kKey2);s.step(270);s.set(kKey2,true);s.step(5);s.set(kKey2,false);s.step(25);assert(s.events.size()==1&&s.events[0].gesture==kSingle);}
+ // A genuinely late second click remains a separate single.
+ {Simulation s;GestureBindings b;b.physical[kKey2]=(1u<<kSingle)|(1u<<kDouble);s.engine.setBindings(b.physical);s.tap(kKey2);s.step(281);s.tap(kKey2);s.step(300);assert(s.events.size()==2&&s.events[0].gesture==kSingle&&s.events[1].gesture==kSingle);}
  std::cout<<"PASS single/double/triple, hold/release, modified turns, click suppression, independent inputs, debounce, scene cancellation and timer wrap\n";
 }

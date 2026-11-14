@@ -1,6 +1,6 @@
 # Bluetooth controls and Tab5 feedback
 
-Implemented in ColoPlay **0.6.4-smooth-progress**, with a separate ColoPlay peer driver
+Implemented in ColoPlay **0.6.6-input-sampling**, with a separate ColoPlay peer driver
 in `rGnng/mpdtab5`, based on
 [`a34fa8a`](https://github.com/rGnng/mpdtab5/commit/a34fa8a2c7547573f128b47061d7359f3f504a81).
 The existing MPD volume-grid helper and worker remain authoritative. Tab5's
@@ -35,12 +35,12 @@ Bluetooth actions. Serial is deferred; unavailable actions are not selectable.
 
 | Group | Controls |
 |---|---|
-| Device · Scenes | Next Scene, Previous Scene, Switch to Scene |
-| Device · Display / Lighting | Screen/ring/button brightness, rainbow, static color |
-| Device · Speaker / System | Local speaker volume, tone, sleep/wake, time sync |
-| Bluetooth · Volume | Volume Up/Down, using host step, 1/64 or 1/16 |
-| Bluetooth · Playback | Play/Pause, Play, Pause, Stop, Previous Track, Next Track, Fast Forward, Rewind, Mute |
-| Bluetooth · Keyboard | Keyboard HID usage and modifier mask |
+| Device Scenes | Next Scene, Previous Scene, Switch to Scene |
+| Device Display / Lighting | Screen/ring/button brightness, rainbow, static color |
+| Device Speaker / System | Local speaker volume, tone, sleep/wake, time sync |
+| Bluetooth Volume | Volume Up/Down, using host step, 1/64 or 1/16 |
+| Bluetooth Playback | Play/Pause, Play, Pause, Stop, Previous Track, Next Track, Fast Forward, Rewind, Mute |
+| Bluetooth Keyboard | Keyboard HID usage and modifier mask |
 
 Play/Pause, Previous Track and Next Track follow
 [Apple remote-command naming](https://developer.apple.com/documentation/mediaplayer/mpremotecommandcenter).
@@ -93,8 +93,8 @@ The **Tab5 BLE** scene uses navigation bindings matching Tab5's existing UI:
 | Button 1 | Escape / Back |
 | Button 4 first, then Button 2 | Page Up |
 | Button 4 first, then Button 3 | Page Down |
-| Button 2 first, then Button 1 | `[` · previous screen/menu |
-| Button 2 first, then Button 4 | `]` · next screen/menu |
+| Button 2 first, then Button 1 | `[` previous screen/menu |
+| Button 2 first, then Button 4 | `]` next screen/menu |
 
 The same Button 2/4 pair therefore has two actions depending on which is held
 first. Keep the modifier down and tap targets repeatedly. Simultaneous presses
@@ -116,7 +116,7 @@ or decorative boxes. When feedback is unavailable, both Bluetooth screens show
 only the locally bundled `andrsrxn:bluetooth-connecting` icon, without connection
 text. Glyph data stays in flash; no whole font is loaded into RAM.
 
-Scene **Ring display → Bluetooth playback progress · clockwise** fills the
+Scene **Ring display → Bluetooth playback progress (clockwise)** fills the
 physical LED ring from elapsed/duration using scene colors and brightness.
 Playing uses a shared smoothed local clock between position packets; repeated
 heartbeats/ACKs do not reset it. Pause freezes, Stop clears,

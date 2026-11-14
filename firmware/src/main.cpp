@@ -1,4 +1,5 @@
 #include "device_log.h"
+#include "input_trace.h"
 #include "panic_capture.h"
 // ColoPLAY V1 hardware demo. Keep the factory bootloader / partition tables.
 
@@ -30,7 +31,7 @@ constexpr const char *kHostname = "coloplay";
 #ifdef COLOPLAY_USB_CONCURRENCY_TEST
 constexpr const char *kFirmwareVersion = "0.4.1-usb-concurrency-test";
 #else
-constexpr const char *kFirmwareVersion = "0.6.4-smooth-progress";
+constexpr const char *kFirmwareVersion = "0.6.13-plain-labels";
 #endif
 constexpr const char *kPrefsNamespace = "wifi";
 constexpr uint32_t kWifiRetryMs = 10000;
@@ -261,6 +262,7 @@ void setupHttp() {
     });
   }
   server.on("/", HTTP_GET, [] { server.send_P(200, "text/html; charset=utf-8", kDemoPage); });
+  InputTrace::setup(server);
   server.on("/api/status", HTTP_GET, [] {
     server.send(200, "application/json", statusJson());
   });

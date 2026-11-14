@@ -13,9 +13,9 @@ class ActionFeedback {
   };
   void clear() { state_=State{}; }
   void apply(const SceneSettings::Action &action,int percent,uint32_t now) {
-    if (action.led!=SceneSettings::kInherit) {
-      state_.led=action.led; state_.color=action.color;
-      state_.remote=action.type==SceneSettings::kBluetoothVolume&&action.led==SceneSettings::kProportional;
+    if (action.ledEffect()!=SceneSettings::kInherit) {
+      state_.led=action.ledEffect(); state_.color=action.color;
+      state_.remote=action.type==SceneSettings::kBluetoothVolume&&action.ledEffect()==SceneSettings::kProportional;
       state_.percent=percent<0?0:percent; ledUntil_=now+action.feedbackMs;
     }
     if (action.screen!=SceneSettings::kUnchanged) {

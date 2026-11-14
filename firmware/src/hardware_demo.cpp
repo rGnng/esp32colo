@@ -1,4 +1,6 @@
 #include "device_log.h"
+#include "input_trace.h"
+#include "input_worker.h"
 #include "hardware_demo.h"
 #include "audio_demo.h"
 #include "board_pins.h"
@@ -9,7 +11,6 @@
 #include "inter_clock_fonts.h"
 #include "lighting_settings.h"
 #include "scene_service.h"
-#include "chord_engine.h"
 #include "scene_icons.h"
 #include "general_service.h"
 #include "idle_timer.h"
@@ -74,9 +75,7 @@ int gScreenLevel = 70, gRingLevel = 70, gKeysLevel = 70;
 int gLedTest = 0;
 uint32_t gLedTestUntil = 0;
 int32_t gEncoderEdges = 0, gKnobPosition = 0;
-int16_t gLastEncoder = 0;
-RotaryDetents gDetents;
-ChordEngine gGestures;
+uint32_t gInputGeneration=0,gInputActivity=0,gInputDropped=0;
 IdleTimer gIdle;
 uint32_t gSleepMinutes=60;
 uint32_t gSceneEpoch = 0;
@@ -227,43 +226,28 @@ void setupEncoder() {
 
 void pollInputs(uint32_t now) {
   if (gSceneEpoch != SceneService::epoch()) {
-    gSceneEpoch = SceneService::epoch(); gGestures.configure(SceneService::combinations(),SceneService::gestureBindings());
+    gSceneEpoch = SceneService::epoch(); gInputGeneration=InputWorker::configure(SceneService::combinations(),SceneService::gestureBindings(),gSceneEpoch);
     gAwake = true; gIdle.activity(now); updateBrightness();
     if(gSceneShown!=SceneService::activeScene()){gSceneShown=SceneService::activeScene();gSceneOverlayUntil=now+1600;gLastFrame=now-200;}
   }
-  int32_t delta = 0;
-  if (gEncoder) {
-    int16_t value = 0;
-    if (pcnt_get_counter_value(PCNT_UNIT_0, &value) == ESP_OK) {
-      const int32_t edges = value - gLastEncoder;
-      gEncoderEdges += edges; gLastEncoder = value;
-      if (abs(value) > 20000) {
-        pcnt_counter_pause(PCNT_UNIT_0); pcnt_counter_clear(PCNT_UNIT_0);
-        gLastEncoder = 0; pcnt_counter_resume(PCNT_UNIT_0);
-      }
-      delta = gDetents.consume(edges); gKnobPosition += delta;
-    }
-  }
-  bool raw[SceneSettings::kInputCount];
-  for (int i=0;i<SceneSettings::kInputCount;++i) raw[i]=digitalRead(gKeys[i].pin)==LOW;
-  struct Event { int input, gesture, repeat; } events[32];
-  int count=0;
-  gGestures.tick(raw,delta,now,[&](int input,int gesture,int repeat) {
-    if (count<32) events[count++]={input,gesture,repeat};
-  });
-  bool activity=delta!=0,held=false;
-  for (int i=0;i<SceneSettings::kInputCount;++i) {
-    const bool down=gGestures.down(i);
-    if (down&&!gKeys[i].pressed) {++gKeys[i].presses;activity=true;}
-    held|=down;
-    gKeys[i].pressed=down;
+  const auto sampled=InputWorker::snapshot();
+  gEncoderEdges=sampled.edges;gKnobPosition=sampled.position;
+  const bool activity=sampled.activity!=gInputActivity;gInputActivity=sampled.activity;
+  const bool held=sampled.down!=0;
+  for(int i=0;i<SceneSettings::kInputCount;++i){gKeys[i].pressed=(sampled.down&(1u<<i))!=0;gKeys[i].presses=sampled.presses[i];}
+  if(sampled.dropped!=gInputDropped){
+    gInputDropped=sampled.dropped;InputWorker::discard();
+    gInputGeneration=InputWorker::configure(SceneService::combinations(),SceneService::gestureBindings(),gSceneEpoch);
+    BluetoothService::cancel();DeviceLog::println("[inputs] queue overflow; cancelled pending inputs");
   }
   if(held||activity)gIdle.activity(now);
   const bool wakeByInput=activity&&!gAwake;
-  for (int i=0;i<count;++i) {
-    SceneService::event(events[i].input,events[i].gesture,events[i].repeat);
+  InputWorker::Event event;
+  for(int i=0;i<64&&InputWorker::next(event);++i){
+    if(event.generation!=gInputGeneration)continue;
+    SceneService::event(event.input,event.gesture,event.repeat);
     if (gSceneEpoch!=SceneService::epoch()) {
-      gSceneEpoch=SceneService::epoch(); gGestures.configure(SceneService::combinations(),SceneService::gestureBindings());
+      gSceneEpoch=SceneService::epoch(); gInputGeneration=InputWorker::configure(SceneService::combinations(),SceneService::gestureBindings(),gSceneEpoch);
       gAwake=true;gIdle.activity(now);updateBrightness();
       if(gSceneShown!=SceneService::activeScene()){gSceneShown=SceneService::activeScene();gSceneOverlayUntil=now+1600;gLastFrame=now-200;}
       break;
@@ -414,7 +398,7 @@ int applyAction(const SceneSettings::Action &a, int repetitions) {
     case kStatic: gLighting.mode=LightingSettings::kStatic; gLighting.color=a.color; lightingChanged=true; break;
     case kToggleAwake: gAwake=!gAwake;gIdle.activity(millis());break;
     case kSync: ClockService::requestSync(); break;
-    case kTone: AudioDemo::beep(a.value,200); break;
+    case kTone: break; // SceneService applies the per-action sound switch.
     case kBluetoothVolume: {
       const auto s=BluetoothService::snapshot();const int denominator=abs(a.value);const int usage=a.value>0?0xe9:0xea;
       if(s.extension)BluetoothService::send(CP_VOLUME,usage,repetitions,denominator);
@@ -448,10 +432,8 @@ void begin() {
     pinMode(key.pin, key.pullup ? INPUT_PULLUP : INPUT);
     key.raw = key.pressed = digitalRead(key.pin) == LOW;
   }
-  bool initial[SceneSettings::kInputCount];
-  for (int i=0;i<SceneSettings::kInputCount;++i) initial[i]=gKeys[i].pressed;
   gSceneShown=SceneService::activeScene();gSceneOverlayUntil=0;
-  gGestures.seed(initial,millis()); gGestures.configure(SceneService::combinations(),SceneService::gestureBindings()); gSceneEpoch=SceneService::epoch();
+  gSceneEpoch=SceneService::epoch();gInputGeneration=InputWorker::configure(SceneService::combinations(),SceneService::gestureBindings(),gSceneEpoch);
   pinMode(Board::kCharge, INPUT_PULLUP);
   setStage(kLedPower);
   pinMode(Board::kLedPowerEnable, OUTPUT);
@@ -498,6 +480,8 @@ void begin() {
   setBacklight();
   setStage(kAudio);
   AudioDemo::begin();
+  const bool key2Down=digitalRead(Board::kKey2)==LOW;InputTrace::begin(key2Down,key2Down);
+  if(!InputWorker::begin(gEncoder)){DeviceLog::println("[inputs] sampling task failed to start");return;}
   gReady = true;
   gSleepMinutes=GeneralService::sleepTimeoutMinutes();gIdle.configure(gSleepMinutes,millis());
   gLastPage = gLastMetrics = millis();
@@ -543,6 +527,10 @@ void tick() {
 }
 
 void pause(bool paused) {
+  if(gPaused!=paused){
+    InputWorker::discard();
+    gInputGeneration=InputWorker::configure(paused?0:SceneService::combinations(),paused?GestureBindings{}:SceneService::gestureBindings(),SceneService::epoch());
+  }
   gPaused = paused;
   if (gReady) AudioDemo::pause(paused);
 }
@@ -579,6 +567,8 @@ String statusJson() {
   json += ",\"brightness\":" + String(gLighting.screen);
   json += ",\"auto_brightness\":" + String(gLighting.autoScreen ? "true" : "false");
   json += ",\"effective_brightness\":" + String(screenVisible(millis()) ? gScreenLevel : 0) + ",\"spi_hz\":40000000}";
+  const auto inputs=InputWorker::snapshot();
+  json += ",\"inputs\":{\"ready\":"+String(inputs.ready?"true":"false")+",\"sample_period_ms\":1,\"samples\":"+String(inputs.samples)+",\"max_sample_gap_us\":"+String(inputs.maxGapUs)+",\"queue_drops\":"+String(inputs.dropped)+"}";
   json += ",\"encoder\":{\"ready\":" + String(gEncoder ? "true" : "false");
   json += ",\"edges\":" + String(gEncoderEdges) + ",\"position\":" + String(gKnobPosition);
   json += ",\"edges_per_detent\":" + String(RotaryDetents::kEdgesPerDetent);
