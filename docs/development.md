@@ -9,28 +9,46 @@ Bluetooth controls, pairing and the bidirectional media-state contract are in th
 
 ## Current verified release
 
-Application-only OTA on **2026-11-14** deployed the tested integration below.
-This release adds persistent scene ordering and aligns compact status blocks
-with the page title. The Sound/Bluetooth help paragraphs are removed. Manual
-controls and symmetric ring fills remain on top of `0d4723b` and the scene/action
-editor changes.
-Source history and the artifact fingerprints below identify the tested builds.
+The current production firmware is **0.6.19-scene-order**, source
+[`18f3a79`](https://github.com/rGnng/esp32colo/commit/18f3a793fcc9749a0afcc0eb6c98f860f96f8659). It includes persistent scene order,
+source-key action lighting with brightness overrides, symmetric ring fills,
+manual brightness and a compact header. Ambient-light sensing/calibration/Auto
+and the Sound/Bluetooth help paragraphs are removed.
+
+Application-only OTA on **2026-11-14** redeployed the committed image after both
+builds passed. The running MD5 matched; a changed OTA slot and lower uptime
+confirmed a new boot even though the binary was identical to the prior
+candidate. Hardware was ready, boot attempts cleared, recovery off, BLE feedback
+fresh and input/audio/LED error counters zero. Saved scenes, their order, active
+selection and General settings matched the pre-update snapshot.
+
+The host suite and browser/device checks cover scene append/reuse/reorder and
+restart persistence, Next/Previous wrap, stable explicit targets, per-key/ring
+feedback, manual General/scene brightness, searchable HID keys, removed sensor
+UI/telemetry, and 320/375/768/1440 px layouts without JavaScript errors. The
+latest frozen application/ELF, manifest and before/after evidence are in ignored
+`backups/releases/18f3a79/`; feature checks remain under the release-specific
+folders listed in the history below. Tab5's earlier integration baseline is
+recorded alongside ColoPlay; it was unchanged during this deployment.
 
 | Item | Recorded value |
 |---|---|
-| ColoPlay firmware | `0.6.19-scene-order`, based on `0d4723b` |
+| ColoPlay firmware | `0.6.19-scene-order` |
+| ColoPlay source | [`18f3a79`](https://github.com/rGnng/esp32colo/commit/18f3a793fcc9749a0afcc0eb6c98f860f96f8659) |
 | ColoPlay application bytes | 4,089,856 |
 | Running image MD5 | `e67b64991746ba5279aa23834d801985` |
 | Application SHA-256 | `6f1c46f0b76c3a843d59c78d54907a57ddb944ee145936ebff1ff623246a48a5` |
-| OTA slot | `ota_app1` |
+| Latest verified OTA slot | `ota_app0` |
 | Tab5 BLE source | [`79c5dac`](https://github.com/rGnng/mpdtab5/commit/79c5dacd1f38a955f3ea2a8abff5b719d5d616d3) |
 | Tab5 base | `a34fa8a2c7547573f128b47061d7359f3f504a81` |
 | Tab5 application bytes | 2,842,400 |
 | Tab5 running ELF SHA-256 | `46a7807e5e8e483d0e8b8e2f5bab53e585a0448b1a74f476739be17db28e59c9` |
 
-Production and USB-experiment builds and ColoPlay's host suite pass. Browser
-checks cover offline Bluetooth controls, categorized binding parameters,
-unchanged scene controls and 320–1440 px layouts without JavaScript errors.
+## Earlier Bluetooth integration validation
+
+The following records qualify the earlier Tab5/BLE integration and bring-up.
+Later feature-specific checks are in [Release history](#release-history).
+
 Tab5 focused MPD/volume/BLE tests pass, as do 21 native UI CTests. Its untouched
 `a34fa8a` full suite has eight failures and six fixture errors; the integration
 has the same failures and five errors after fixing the D100H lifecycle fixture's
@@ -82,8 +100,9 @@ service ownership before confirmation dispatch, without advertising a fictitious
 battery. Retained panic records now identify the exact crashing ELF hash.
 
 This is a first working BLE integration, not long-duration reliability
-qualification. Generic PC HID and the physical direction/origin of the LED fill
-still require hands-on verification.
+qualification. Generic PC HID and the physical ring direction still
+require hands-on verification. Later checks confirmed the key LED order and
+ring origin; see [verified baseline and open items](#verified-baseline-and-open-items).
 
 Ignored local evidence is under `backups/ble-first/`: frozen pre-test recovery
 images, candidate-1 Tab5, the earlier candidate-4 ColoPlay, before/after JSON, live command
@@ -106,8 +125,13 @@ MD5 `e9a9c17bf4b88ed4e3adfe53a58f1d71`; its evidence remains under
 | `firmware/include/coloplay_ble_protocol.h`, `volume_grid.h` | Shared 20-byte wire contract and Tab5 volume-grid arithmetic |
 | `firmware/src/panic_capture.cpp` | Retained bounded panic diagnosis and crashing ELF identity across reset |
 | `firmware/src/main.cpp` | Startup, WiFi/NVS, shared HTTP routes, serial commands, OTA and recovery orchestration |
-| `firmware/src/hardware_demo.cpp` | GPIO/encoder sampling, Clock/Blank and scene overlays, inactivity sleep, local action dispatch, lighting/ADC and telemetry |
+| `firmware/src/hardware_demo.cpp` | Clock/Bluetooth rendering and scene overlays, inactivity sleep, local action dispatch, manual lighting and supply telemetry |
 | `firmware/src/scene_service.cpp` | Versioned NVS scenes, atomic CRUD/bindings, activation, ordered dispatch and temporary effects |
+| `firmware/src/input_worker.cpp`, `input_trace.cpp` | Dedicated GPIO/PCNT gesture task, bounded event queue and Button 2 timing trace |
+| `firmware/include/scene_order.h` | Stable-ID scene permutation, append/move and ordered Next/Previous navigation |
+| `firmware/include/action_feedback.h`, `action_lighting.h` | Independent per-key/ring overlays, brightness and timed screen feedback |
+| `firmware/include/ring_fill.h`, `playback_clock.h` | Clockwise/symmetric coverage and shared smoothed playback position |
+| `firmware/include/bitmap_font.h`, `playback_assets.h` | Flash-backed Japanese playback font and local connection icon |
 | `firmware/include/scene_settings.h` | Bounded scene/action schema, validation, protected Default and reference retargeting |
 | `firmware/include/gesture_engine.h` | Independent nonblocking click/hold/turn recognizers with cancellation |
 | `firmware/include/gesture_policy.h`, `chord_engine.h` | Binding-aware recognition timing and reusable held combination members |
@@ -136,11 +160,15 @@ now flow through scenes, not the retired diagnostic page/tour handlers.
 
 ## Runtime and persistence
 
-The main loop services HTTP, OTA, NTP and input/peripheral work. Clock and
-scene-overlay frames target 5 fps; Blank/sleep stop display frame updates.
-LED frames target about 30 Hz, ADC sampling every 500 ms and browser status/log
-polling every two seconds while visible. Audio uses its own task. Updates pause
-hardware/audio processing while writing flash.
+The main loop services HTTP, OTA, NTP, queued input actions and peripheral work.
+A priority-3 task samples inputs/recognizes gestures every 1 ms and hands events
+to the main loop through a 64-entry queue. Clock rendering targets 5 fps;
+Bluetooth screens target 20 fps. Overlays use the current screen cadence.
+Blank/sleep suppress display updates.
+LED frames target about 30 Hz, supply ADC1 sampling runs every 500 ms and browser
+status/log polling runs every two seconds while visible. There is no ambient
+ADC2 sampling. Audio has its own task. OTA pauses hardware/audio and clears
+queued input while writing flash.
 Startup and the initial 30-second run window participate in the failed-start
 recovery guard described in [Flashing](flash.md#recovery).
 
@@ -186,7 +214,16 @@ The historical name `test_http_ota.sh` now runs the broader host regression suit
 | `rotary_detents_test.cpp` | Detents, partial turns, reversals, bounce and batched edges |
 | `clock_settings_test.cpp` | Hostname/fallback validation, legacy migration, timezone offsets and daylight saving |
 | `scene_settings_test.cpp` | Protected Default, ordered bindings, deletion/retargeting, corrupt storage and capacity |
-| `action_feedback_test.cpp` | Independent screen/LED lifetimes, replacement, inheritance, clear and timer wrap |
+| `scene_order_test.cpp` | Moves, sparse append/reuse, wraparound, stable IDs, protected Default and invalid permutations/positions |
+| `action_feedback_test.cpp` | Independent key/ring/screen targets, brightness, expiry, combinations, rollover and rendered colors |
+| `action_light_settings_test.cpp` | Brightness/RGB/sound packing, record sizes and atomic legacy migration validation |
+| `action_sound_test.cpp` | Per-action cue gating, directional scene tones, tone gating and old sound-flag migration |
+| `playback_ring_test.cpp` | Clockwise/symmetric bounds, monotonicity, pairs, endpoints and partial coverage |
+| `playback_clock_test.cpp` | Shared position interpolation, stale samples, pause/resume/seek and bounded extrapolation |
+| `bitmap_font_test.cpp` | Flash font parsing, UTF-8 text measurement, fit and glyph rendering |
+| `bluetooth_protocol_test.cpp`, `bluetooth_hid_test.cpp` | BLE wire/usage validation and initialized GATT service ownership |
+| `log_buffer_test.cpp` | Bounded log storage, cursors and wrap/reset behavior |
+| `test_input_worker.py` | Production task boundary and timing traces, generation/overflow handling, encoder and held modifiers |
 | `gesture_engine_test.cpp` | Click counts, hold/release, modified turns, click suppression, debounce, independent inputs, cancellation and timer wrap |
 | `chord_engine_test.cpp` | Exact groups, repeated held-key combinations, binding-aware timing, superset arbitration, boot-held inputs and cancellation |
 | `idle_timer_test.cpp` | One-hour default, disable, timeout boundaries/reset, millis wrap, General v1 migration and numeric validation |
@@ -249,31 +286,32 @@ the current face draws only the 64 px hours/minutes and sync-dependent colon.
 
 ## Scene architecture
 
-The gesture engine takes raw GPIO states and decoded rotary detents; it queues
-recognized events without blocking the HTTP/audio loop. The hardware layer
-passes those to SceneService, which resolves the active scene's saved binding
-and executes ordered actions through a local hardware handler. Scene switching
-ends that list, advances the configuration epoch and cancels pending gestures.
-The recognizer preserves held members as combination anchors; a fresh trigger
-press is required in the next scene.
-No input mappings are hardcoded in the polling loop beyond boot recovery.
+InputWorker owns GPIO/PCNT sampling and binding-aware gesture recognition.
+Generation-tagged events cross its bounded queue to the main loop, where
+SceneService resolves the active scene's binding or a matching Global Default
+binding. Up to three actions execute in order through the hardware/Bluetooth
+handlers. Scene switching ends the list, advances the epoch and cancels pending
+gestures. Held combination modifiers can anchor repeated trigger presses.
 
-Percentage-producing actions return values to the feedback controller. Clock/
-Blank screen overrides and LED effects have independent, bounded lifetimes and
-fall back to the scene's idle screen and lighting. Proportional ring output uses
-a fractional final segment and respects ring brightness; key LEDs retain their
-scene output for this effect. No computer volume or external data source is
-fabricated: the future companion app will supply those integrations.
+Each key and the knob ring have independent feedback deadlines and brightness
+selection. Combinations target every member key. Percentage feedback scales a
+button's own LED or fills the knob ring using the scene's clockwise/symmetric
+style. Screen overrides have a separate lifetime. BluetoothService supplies
+fresh returned MPD volume, playback state, metadata and position; the shared
+playback clock drives both display and ring. Serial companion work is deferred.
 
-NVS writes are bounded by one fixed scene record and use save-before-apply for
-configuration. Scene selection is saved immediately; rapid lighting adjustments
-are debounced. The USB exact-old-default migration changes .21/24 + .30 to
+Scene definitions/actions stay in the fixed 3304-byte settings record; a separate
+12-byte permutation controls display/Next/Previous order without changing IDs.
+New scenes append, Default stays protected and explicit targets remain IDs.
+Configuration saves before application; rapid brightness adjustments debounce
+writes for 1.5 seconds. Scene selection and reordered tabs save immediately.
+The USB exact-old-default migration changes .21/24 + .30 to
 .1/30 + .2 without replacing custom networks. Clock migration retains the old
 primary/timezone and adds empty fallback slots.
 
 ## Verified baseline and open items
 
-Recorded on **2026-11-13** for this unit:
+Bring-up observations from **2026-11-13**, updated with the **2026-11-14** checks:
 
 - User-confirmed visible display, speaker, ring and four key LEDs; key/encoder
   events observed. Physical notch-by-notch confirmation after the decoder change
@@ -292,9 +330,10 @@ Recorded on **2026-11-13** for this unit:
   the single DHCP lease were observed alongside display/audio/NTP operation.
 
 These observations apply to the tested unit/image, not every C169 variant or a
-long-duration qualification. Exact panel variant/readback, physical LED spatial
-order/color calibration, charge transitions and battery state of charge remain
-unestablished. The supply estimate is not an independently calibrated battery
+long-duration qualification. Visual checks confirmed key slots 9/10/11/12 as
+Button 1/2/3/4 and ring slot 0 at 12 o’clock. Ring direction/color calibration,
+exact panel variant/readback, charge transitions and battery state of charge
+remain unestablished. The supply estimate is not an independently calibrated battery
 measurement. Full factory restore boot is untested.
 
 Factory analysis has **not** established connector contacts, module-pad wiring,
@@ -302,7 +341,13 @@ analog resistor/component identities or all peripheral GPIO roles. Hardware
 reference documents record only the recovered binary findings. Remaining custom
 pin names and scaling constants must not be treated as proof of board topology.
 
-## Scene release validation (0.4.0)
+## Release history
+
+These notes describe each release at the time it was tested. Current behavior,
+source identity and deployment evidence are summarized above; older references
+to Auto, former layouts and storage versions are historical.
+
+### Scene release validation (0.4.0)
 
 The host suite covers model corruption/capacity and gesture timing, including
 rotation during the knob debounce window and scene changes during a pending
@@ -314,7 +359,7 @@ scene creation, 5/9 gesture rows, action/effect editing and ordering, save/run/
 activate/reload, and mobile width without JavaScript errors. These checks are
 separate from companion-app integration, which has not been implemented.
 
-## Table editor update (0.4.1)
+### Table editor update (0.4.1)
 
 Scenes are tabs, with Idle screen and a single configured-binding table. Row
 editors support add, duplicate, delete and key/event moves. `editBinding` checks
@@ -335,7 +380,7 @@ The opt-in [USB concurrency experiment](usb-concurrency-test.md) provides a
 separate CDC-ECM/vendor-HID image, host JTAG checks and two-slot local recovery.
 It does not change the production USB modes.
 
-## Per-scene lighting (0.4.2)
+### Per-scene lighting (0.4.2)
 
 The scene record is now v2 (2920 bytes), with independent ring and key LED
 modes/colors. v1 (2792-byte) records validate and migrate without replacing
@@ -365,7 +410,7 @@ past boot confirmation with no LED/audio I/O errors, active USB Ethernet and
 NTP sync. These are telemetry/API checks; physical color appearance still
 requires observation on the unit.
 
-## Screen capture disabled (0.4.3)
+### Screen capture disabled (0.4.3)
 
 Removed the web preview image and automatic screenshot refresh, together with
 `/api/screenshot.bmp` and its row-by-row BMP encoder. Old browser tabs receive
@@ -380,7 +425,7 @@ JavaScript errors at desktop/mobile widths. The removed capture route returns
 Hardware passed boot confirmation and its physical display frame counter kept
 advancing. No CPU-load benchmark was taken.
 
-## Compact Bootstrap configuration (0.4.4)
+### Compact Bootstrap configuration (0.4.4)
 
 General, Scenes and Device use a compact Bootstrap dark layout with a desktop
 navigation rail, mobile tabs, smaller form rows and a dense binding table.
@@ -416,7 +461,7 @@ JavaScript errors. Scenes, active selection, lighting/Auto, clock and USB
 settings matched the pre-update snapshot. The device passed boot confirmation
 and continued physical display rendering with USB Ethernet active.
 
-## Header notifications, UTC choices and RAM log (0.4.5)
+### Header notifications, UTC choices and RAM log (0.4.5)
 
 Save/error/dirty messages occupy a reserved title-bar slot; removed the duplicate
 inline scene-save status. Desktop and 390/320-pixel browser checks measured
@@ -449,7 +494,7 @@ pause/refresh/download without JavaScript errors; existing scenes, active
 selection, General settings and clock servers matched their pre-update values.
 The boot confirmed successfully and the physical display kept rendering.
 
-## Readable typography (0.4.6)
+### Readable typography (0.4.6)
 
 Raised input/table text to 16 px, labels/buttons/log text to 14 px, and enlarged
 headings, navigation and secondary text. Brightness columns and narrow-screen
@@ -462,7 +507,7 @@ layouts from 320 to 1440 px, and stable panel positions during status changes.
 No JavaScript errors were observed. The device passed boot confirmation with
 scene definitions, active selection, lighting and clock settings preserved.
 
-## Scene combinations, overrides, icons and Global bindings (0.5.0)
+### Scene combinations, overrides, icons and Global bindings (0.5.0)
 
 The v3 record is 3304 bytes, adding per-channel brightness/Auto overrides,
 scene icons and a Default-only Global flag per binding. Separate v1/v2 structs
@@ -499,7 +544,7 @@ scene example remains for the user's physical test; GPIO timing was tested in
 the host recognizer, not injected into the physical unit. Overlay telemetry
 and continuing display frames were verified; appearance needs observation.
 
-## WiFi summary and SSID editor (0.5.1)
+### WiFi summary and SSID editor (0.5.1)
 
 WiFi shows SSID, connection status, RSSI and IP via the existing status poll.
 Disconnected/unreachable states clear RSSI/IP. Credentials move into a native
@@ -516,7 +561,7 @@ errors or configuration writes. Scene/global settings and WiFi SSID matched the
 pre-update snapshot, and the device passed boot confirmation.
 
 
-## Scene sound and responsive inputs (0.5.2–0.5.3)
+### Scene sound and responsive inputs (0.5.2–0.5.3)
 
 General has a persisted Scene change sound switch, initially on. Successful
 active-ID changes queue a 90 ms tone after the scene NVS commit. Next uses
@@ -563,7 +608,7 @@ builds and the complete host suite passed. Evidence is kept locally under
 `backups/responsive-inputs/`.
 
 
-## Blank idle screen and inactivity sleep (0.5.4)
+### Blank idle screen and inactivity sleep (0.5.4)
 
 Clock/Blank extend the existing scene-screen enum without changing the 3304-byte
 v3 record layout or existing enum values. Scene JSON now reports the stored and
@@ -594,7 +639,7 @@ button/knob wake still needs hands-on observation. The timer was restored to
 60 minutes and the temporary scene removed; original scene definitions and
 sound preferences were preserved. Evidence: `backups/idle-sleep/`.
 
-## Bluetooth scenes and storage (0.6.0)
+### Bluetooth scenes and storage (0.6.0)
 
 Scene version 4 keeps the v3 3304-byte layout, adding enum values for Bluetooth
 volume/media/key actions and volume/playback screens. Migration validates v3's
@@ -616,7 +661,7 @@ it performs no allocation, network or flash writes in the panic path. Addresses
 must be decoded against the exact frozen ELF of the crashing image. This uses
 the pinned SDK's private panic ABI and must be reviewed on SDK upgrades.
 
-## Ordered modifiers, effects gain and playback layout (0.6.1)
+### Ordered modifiers, effects gain and playback layout (0.6.1)
 
 Scene schema 5 preserves the 3304-byte layout. A combination input keeps its
 four-member mask in bits 0–3; bits 4–6 encode modifier index + 1 (zero is Any
@@ -647,7 +692,7 @@ priority. The LCD playback screen draws play/pause/stop/seek shapes above title
 and artist, measures long lines and ellipsizes at UTF-8 boundaries, and removes
 the LCD progress bar. No emoji font or raster asset is added.
 
-## Japanese playback font and compact layout (0.6.2)
+### Japanese playback font and compact layout (0.6.2)
 
 The playback screen uses an offline 16 px Noto Sans JP font, covering all 16,732
 characters mapped by the pinned Regular 2.004 Japanese subset OTF. The upstream
@@ -693,7 +738,7 @@ A bounded disable/re-enable check exercised the icon-only unavailable branch:
 frames continued updating without a panic, then the saved bonded peer and fresh
 playback feedback reconnected. Bluetooth enabled state was restored afterward.
 
-## Icon-only playback state (0.6.3)
+### Icon-only playback state (0.6.3)
 
 Removed Playing/Paused/Stopped/Fast Forward/Rewind text from the playback
 header, leaving only its small centered state icon. Removed playback's footer
@@ -701,7 +746,7 @@ status words and the volume screen's Playing/Paused line. Title/artist stay
 centered with the 16 px Japanese font, and progress/time remain below. API/web
 diagnostics retain state and command outcomes. No settings/schema changes.
 
-## Continuous shared playback clock (0.6.4)
+### Continuous shared playback clock (0.6.4)
 
 The periodic Tab5 GATT state copies cached MPD time, typically refreshed once
 per second, while BLE state runs about twice per second and command results may
@@ -740,7 +785,7 @@ captured pair retained raw `60066` ms while display position advanced from
 `59927` to `60973` ms. Refresh remained **19.4 fps**; no panic was recorded.
 These are software position samples, not a physical high-speed LCD/LED recording.
 
-## Button 2 missed double presses (0.6.5 diagnostic / 0.6.6 fix)
+### Button 2 missed double presses (0.6.5 diagnostic / 0.6.6 fix)
 
 The physical GPIO trace showed stable presses/release gaps of about 46–106 ms,
 with Button 2 sampling gaps commonly 37–40 ms and up to 60.6 ms during LCD
@@ -780,7 +825,7 @@ Both firmware environments and the complete host suite pass. Evidence is under
 ignored `backups/button-double-investigation/`; the sanitized GPIO capture is
 checked in as `tests/fixtures/key2_double_trace.json`.
 
-## Per-action sound (0.6.7)
+### Per-action sound (0.6.7)
 
 Every ordered binding action now has an independent Sound switch in its editor
 header and a Sound on summary in the binding table. It survives editing,
@@ -822,7 +867,7 @@ Bluetooth feedback reconnected, and audio I/O errors and input queue drops staye
 at zero. Display refresh remained 19.7 fps.
 
 
-## Modifier multi-select (0.6.8)
+### Modifier multi-select (0.6.8)
 
 The Bluetooth keyboard editor replaces the decimal modifier input with a local
 multi-select dropdown. Eight left/right Control, Shift, Alt/Option and GUI
@@ -845,7 +890,7 @@ dropdown was exercised on desktop and mobile without submitting any settings
 writes. Evidence: ignored `backups/modifier-select/release/`.
 
 
-## Title-side notifications (0.6.9)
+### Title-side notifications (0.6.9)
 
 Settings panels, the scene editor, binding/WiFi/scene-name dialogs, log view and
 firmware updater reserve notification space to the right of their title. Empty,
@@ -869,7 +914,7 @@ through unsaved and long-error states, then cancelled without settings writes.
 Evidence: ignored `backups/title-notices/release/`.
 
 
-## Scene tab borders (0.6.10)
+### Scene tab borders (0.6.10)
 
 The scene strip overlaps the panel border by one pixel. The selected tab's
 bottom border matches the panel background, joining the tab to its content;
@@ -885,7 +930,7 @@ confirmed the selected-tab join on desktop/mobile without settings writes.
 Evidence: ignored `backups/scene-tabs/release/`.
 
 
-## Modifier row selection (0.6.11)
+### Modifier row selection (0.6.11)
 
 Clicking modifier text could focus the containing dialog during pointer-down.
 The generic focus-out handler immediately closed the menu, so pointer-up landed
@@ -908,7 +953,7 @@ modifier text, checked highlights/tags and cancelled without any settings writes
 Evidence: ignored `backups/modifier-rows/release/`.
 
 
-## Custom dropdowns throughout configuration (0.6.12)
+### Custom dropdowns throughout configuration (0.6.12)
 
 A local browser component now draws every visible single-select dropdown:
 USB mode, timezone, General lighting, scene screens/lighting/brightness,
@@ -941,7 +986,7 @@ were cancelled with no settings writes. Evidence: ignored
 `backups/custom-dropdowns/release/`.
 
 
-## Plain interface labels (0.6.13)
+### Plain interface labels (0.6.13)
 
 Removed middle-dot separators from all authored interface strings: page titles,
 labels, action groups, step choices, summaries, tooltips, status/diagnostic text
@@ -958,7 +1003,7 @@ UI edits were cancelled without settings writes. Evidence: ignored
 `backups/plain-labels/release/`.
 
 
-## Scene editor layout and HID key search (0.6.14)
+### Scene editor layout and HID key search (0.6.14)
 
 Scene identity moves into the heading beside the title. Idle screen/ring display
 share a desktop row, with ring/button color controls on the next row at equal
@@ -989,7 +1034,7 @@ retention and desktop/mobile popup checks. All live edits were cancelled with
 no settings writes. Evidence: ignored `backups/scene-editor/release/`.
 
 
-## Source-key action lighting and header status (0.6.15)
+### Source-key action lighting and header status (0.6.15)
 
 Action light feedback now targets only the binding input. Button 1–4 use their
 own LED, combinations use all participating buttons, and every knob gesture
@@ -1049,7 +1094,7 @@ scene definitions, active selection and General settings matched the pre-OTA
 snapshot, with inherited brightness as the only added action field.
 
 
-## Symmetric ring fills (0.6.16)
+### Symmetric ring fills (0.6.16)
 
 Scene Ring fill style selects Clockwise or Bottom to top (symmetric), applying
 to Bluetooth playback progress and knob proportional feedback, including
@@ -1097,7 +1142,7 @@ custom style-menu placement and dirty/reload behavior with no settings writes
 or JavaScript errors.
 
 
-## Remove ambient-light feature (0.6.17)
+### Remove ambient-light feature (0.6.17)
 
 The unit has no established usable ambient sensor exposed outside its case.
 ADC2/GPIO16 configuration and sampling, sample smoothing, calibration conversion,
@@ -1142,7 +1187,7 @@ writes or JavaScript errors. Final status confirmed the expected running MD5,
 cleared boot guard, hardware ready and fresh BLE feedback.
 
 
-## Connection footer restored (0.6.18)
+### Connection footer restored (0.6.18)
 
 Ready/version and IP return to the bottom left of the sticky desktop sidebar,
 using the existing connection ID and status polling. Standby screen and last
@@ -1164,7 +1209,7 @@ were edited externally during the test window; the latest values were retained.
 Release evidence is in `backups/connection-footer/release/`.
 
 
-## Scene order and compact header (0.6.19)
+### Scene order and compact header (0.6.19)
 
 The arrow controls beside + Scene move the selected tab without activating it
 or discarding its unsaved settings draft. New scenes append even when they

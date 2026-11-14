@@ -6,7 +6,8 @@ compact navigation tabs. Form inputs and table text are 16 px; labels and
 buttons are 14 px, with larger headings and log text. [API](api.md), [development](development.md), and
 [build/update/recovery](flash.md) instructions are maintained separately.
 The [verified release record](development.md#current-verified-release) identifies
-the compiled and OTA-tested image. Bluetooth controls, pairing and feedback are described in the
+the compiled and OTA-tested image from source `18f3a79`. Bluetooth controls,
+pairing and feedback are described in the
 [Tab5 integration guide](tab5-integration.md); Serial remains deferred.
 
 ## Connect
@@ -115,7 +116,8 @@ It shows the scene icon and name for about 1.6 seconds, then returns to the save
 Clock or Blank idle screen.
 
 The scene settings panel has a **Scene icon** picker with 32 bundled Bootstrap
-icons (icon-only button; hover for its name), **Idle screen**, **Ring color**, **Button color**, and brightness controls
+icons (icon-only button; hover for its name), **Idle screen**, **Ring display**, **Ring fill style**, **Ring color**,
+**Button color**, and brightness controls
 for screen, ring and buttons, followed by the key binding table. Each LED group independently uses
 **Static color** with its own picker, **Rainbow**, or **Use General**. Click
 **Save settings** to persist the scene. Colors apply when that scene is active;
@@ -140,6 +142,10 @@ selection. New brightness overrides start at Use General, icons start at House,
 and existing bindings are not made Global automatically. The version-7 scene
 record is 3304 bytes; older firmware cannot read it, so an application downgrade
 is not a scene-settings rollback.
+
+Scene order is saved separately in a 12-byte NVS record. Existing installations
+without this record keep their previous ID order until a scene is moved or
+created. Reordering preserves IDs, bindings, scene settings and active selection.
 
 Current bounded NVS storage supports **8 scenes**, **64 configured gestures**
 across all scenes, and **3 ordered actions per gesture**. Empty bindings consume

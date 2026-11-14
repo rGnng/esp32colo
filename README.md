@@ -13,9 +13,14 @@ development. The build target and default hostname remain `coloplay`.
 
 ## Current baseline
 
-Current firmware: **`0.6.19-scene-order`**, based on `0d4723b`, with saved scene ordering, manual brightness controls, symmetric ring fills and source-key lighting feedback. Scene controls include searchable HID key choices. Tab5 changes build on **`a34fa8a`** and reuse its MPD volume logic.
-Both devices are updated by application-only OTA. Validation details and image
-fingerprints are in the [release record](docs/development.md#current-verified-release).
+Current firmware: **`0.6.19-scene-order`**, committed as
+[`18f3a79`](https://github.com/rGnng/esp32colo/commit/18f3a793fcc9749a0afcc0eb6c98f860f96f8659). It includes saved scene ordering,
+manual brightness, symmetric ring fills, source-key lighting feedback and
+searchable HID keys. Tab5 uses the recorded BLE integration built on
+**`a34fa8a`** and its existing MPD volume logic.
+Both devices use application-only OTA. The latest ColoPlay deployment,
+validation results and image fingerprints are in the
+[release record](docs/development.md#current-verified-release).
 The working firmware provides:
 
 - A plain Inter clock showing hours and minutes, with a colon only after NTP sync.
@@ -75,7 +80,7 @@ Each current topic has one primary guide:
 
 | Need | Guide |
 |---|---|
-| Use the clock, lights, sensors, WiFi and USB | [Firmware guide](docs/firmware.md) |
+| Use the clock, lighting, controls, WiFi and USB | [Firmware guide](docs/firmware.md) |
 | Set up tools, back up, build, update or recover | [Flashing and recovery](docs/flash.md) |
 | Integrate controls or read telemetry | [HTTP API](docs/api.md) |
 | Use Bluetooth controls, Tab5 pairing and media feedback | [Tab5 integration guide](docs/tab5-integration.md) |

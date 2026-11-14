@@ -40,13 +40,14 @@ General, Scenes and Device panels, a desktop navigation rail and mobile tabs.
 Add new top-level pages to app.js's `pages` array and matching navigation/panel
 markup; APIs and NVS remain the responsibility of the firmware services.
 
-The 0.6.1 panels include:
+The current panels include:
 
 - General: WiFi status and SSID/password dialog, USB, NTP/timezone, independent
   manual lighting controls, scene-change sound, inactivity timeout, sound-effects gain and Bluetooth
   enable/pair/forget/status.
 - Scenes: Clock/Blank/Bluetooth volume/playback idle screen, icon-only selector with named tooltips,
-  scene colors/brightness overrides, playback-progress ring, ordered modifier
+  saved tab order with left/right move controls, scene colors/brightness overrides,
+  clockwise/symmetric playback-progress and volume ring styles, ordered modifier
   combinations, Global bindings and ordered
   grouped Device/Bluetooth commands with screen/light effects and per-action sound.
   Bluetooth keyboard modifiers use a local multi-select dropdown with removable
@@ -102,9 +103,10 @@ flash, without a new library, CDN, network poll or settings schema.
 Use plain labels and sentences throughout the interface. Do not use middle-dot
 characters as separators in labels, menus, status text, summaries or tooltips.
 
-The scene icon is in the scene heading. Screen/ring behavior and the two color
-controls use equal desktop columns and stack on narrow screens, leaving room
-for static-color swatches. Keyboard HID key actions use a grouped, searchable
+The scene icon is in the scene heading. Idle screen, ring display and fill style
+share the desktop behavior row. Ring/button colors use equal columns below it,
+with room for static-color swatches; narrow layouts wrap or stack. Keyboard
+HID key actions use a grouped, searchable
 picker with 141 named keys. Search includes names, decimal/hex codes and aliases;
 Custom HID code retains the original 1–231 input for unlisted usages. Modifier
 masks are independent and retained when changing keys.
@@ -113,8 +115,9 @@ Action lighting is scoped to the binding's physical input: individual key,
 combination members, or knob ring. The editor exposes on/off/color/brightness
 and the existing feedback duration. Brightness can inherit scene/General or
 use an absolute percentage, stored with the action. Standby screen and last
-input live in a fixed-height strip in the top header. Connection/version and
-IP are in the desktop sidebar footer, hidden in the compact mobile layout.
+input use two fixed-height lines beside the page title and active-scene block
+in the desktop header. Connection/version and IP are in the desktop sidebar
+footer, hidden in the compact mobile layout.
 The binding-table heading has no live status text.
 
 Scene Ring fill style selects clockwise or symmetric bottom-to-top coverage

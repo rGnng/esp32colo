@@ -22,6 +22,15 @@ fi
 ./scripts/test_http_ota.sh
 ```
 
+To validate both production and the opt-in USB experiment, build them explicitly:
+
+```bash
+.venv/bin/pio run --project-dir firmware -e coloplay -e usb-concurrency
+```
+
+The normal OTA image remains the `coloplay` application; the experiment has its
+own [host checks and recovery procedure](usb-concurrency-test.md).
+
 The normal build also regenerates embedded web assets from `firmware/web/`
 using Python only; it needs no npm, Sass or network access for those assets.
 See the [web source guide](../firmware/web/README.md) for optional Bootstrap
@@ -63,7 +72,8 @@ to match the uploaded file. Confirm `hardware.ready` after the startup window,
 then `recovery_mode=false` and `boot_attempts=0` after the 30-second confirmation
 period. Check `running_partition` and a fresh uptime to establish that the
 updated image booted, especially when reinstalling an identical image whose
-MD5 already matched before upload.
+MD5 already matched before upload. Refresh the configuration page after OTA to
+load its updated HTML and hashed local assets.
 
 ArduinoOTA remains available for installed firmware without HTTP OTA, including
 the earlier `0.1.3-nvs` baseline:
@@ -218,6 +228,12 @@ Versions 0.6.7–0.6.14 used scene version 6; earlier images cannot read the new
 per-action brightness byte.
 The 0.6.1–0.6.6 builds used scene version 5 and cannot read the new action sound
 flags. Prefer disabling Bluetooth over downgrading firmware.
+Scene order is a separate version-1, 12-byte `scenes/order` record introduced
+in 0.6.19. Use 0.6.19 or later for saved ordering in the UI and Next/Previous
+navigation. Earlier schema-7 builds can read the scene definitions but ignore
+this order record. Lighting remains version 1 / 44 bytes; obsolete Auto and
+calibration words are reserved and ignored by 0.6.17 and later.
+
 The existing two-failed-start guard keeps WiFi/HTTP OTA available in recovery.
 Send `POST /api/bluetooth` with form `op=disable`, then use the authenticated
 `POST /api/hardware/retry` to restart hardware. Keep the same OTA admin password.

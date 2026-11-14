@@ -7,7 +7,7 @@ This reference describes the current implementation in
 [scene_service.cpp](../firmware/src/scene_service.cpp),
 [clock_service.cpp](../firmware/src/clock_service.cpp) and
 [usb_network.cpp](../firmware/src/usb_network.cpp).
-The current release is **0.6.6-input-sampling**; deployment fingerprints are in the
+The current release is **0.6.19-scene-order** (source `18f3a79`); deployment fingerprints are in the
 [release record](development.md#current-verified-release). Bluetooth's BLE wire
 contract and Tab5 setup are documented in the [integration guide](tab5-integration.md).
 Serial companion framing remains proposed.
@@ -367,7 +367,7 @@ restarts the device. If device IP/prefix changes without an explicit host
 address, the DHCP peer is computed from the new subnet. Initial settings are
 172.32.29.1/30, peer 172.32.29.2. Only the exact previous defaults migrate;
 custom networks are preserved. Defaults and connection instructions are in the
-[firmware guide](firmware.md#usb-networking-and-serialjtag).
+[firmware guide](firmware.md#usb-cdc-network).
 
 ```bash
 curl http://coloplay.local/api/usb
