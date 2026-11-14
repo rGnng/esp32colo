@@ -30,7 +30,7 @@ int main(){
   // A real v5 record has no audio flags. Preserve all other bytes, including
   // ordered actions, local/global bindings, lighting and active scene.
   auto legacy=defaults();legacy.version=5;
-  for(auto &b:legacy.bindings)for(auto &action:b.actions)action.setSound(false);
+  for(auto &b:legacy.bindings)for(auto &action:b.actions){action.setSound(false);action.setLedBrightness(0);}
   legacy.bindings[0].global=1;legacy.scenes[0].ringDisplay=kRingBluetoothProgress;
   legacy.scenes[0].levels[1].percent=31;
   for(bool sceneSound:{false,true}){
@@ -40,7 +40,7 @@ int main(){
         (action.type==kTone||(sceneSound&&ActionSound::sceneChange(action))));
     }
     migrated.version=5;
-    for(auto &b:migrated.bindings)for(auto &action:b.actions)action.setSound(false);
+    for(auto &b:migrated.bindings)for(auto &action:b.actions){action.setSound(false);action.setLedBrightness(0);}
     assert(!std::memcmp(&legacy,&migrated,sizeof(legacy)));
   }
   auto corrupt=legacy;corrupt.bindings[0].actions[0].setSound(true);

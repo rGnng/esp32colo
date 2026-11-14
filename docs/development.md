@@ -10,16 +10,18 @@ Bluetooth controls, pairing and the bidirectional media-state contract are in th
 ## Current verified release
 
 Application-only OTA on **2026-11-14** deployed the tested integration below.
-This release includes the input, sound and configuration-editor changes built
-on `4574a84`. Source history and the artifact fingerprints below identify the
-tested builds.
+This release adds persistent scene ordering and aligns compact status blocks
+with the page title. The Sound/Bluetooth help paragraphs are removed. Manual
+controls and symmetric ring fills remain on top of `0d4723b` and the scene/action
+editor changes.
+Source history and the artifact fingerprints below identify the tested builds.
 
 | Item | Recorded value |
 |---|---|
-| ColoPlay firmware | `0.6.13-plain-labels`, based on `4574a84` |
-| ColoPlay application bytes | 4,087,360 |
-| Running image MD5 | `4d8b5d294e07f65e99596f89222cf514` |
-| Application SHA-256 | `36eca76a546c16b8be373065700766ae899dfaf2760207a3026a40f32614c895` |
+| ColoPlay firmware | `0.6.19-scene-order`, based on `0d4723b` |
+| ColoPlay application bytes | 4,089,856 |
+| Running image MD5 | `e67b64991746ba5279aa23834d801985` |
+| Application SHA-256 | `6f1c46f0b76c3a843d59c78d54907a57ddb944ee145936ebff1ff623246a48a5` |
 | OTA slot | `ota_app1` |
 | Tab5 BLE source | [`79c5dac`](https://github.com/rGnng/mpdtab5/commit/79c5dacd1f38a955f3ea2a8abff5b719d5d616d3) |
 | Tab5 base | `a34fa8a2c7547573f128b47061d7359f3f504a81` |
@@ -146,24 +148,22 @@ recovery guard described in [Flashing](flash.md#recovery).
 |---|---|---|
 | `wifi` | `ssid`, `pass` | Seeded from `secrets.h` only when no stored SSID exists; web/serial changes restart |
 | `clock` | Versioned `settings` blob, 804 bytes (v2; migrates 296-byte v1) | Three NTP servers and supported zone committed together; apply and sync immediately |
-| `lighting` | Versioned `settings` blob, 44 bytes | Independent levels/Auto flags, mode/color and calibration; web saves before apply; knob writes debounced 1.5 s |
+| `lighting` | Versioned `settings` blob, 44 bytes | Manual levels and mode/color; retired fields reserved; web saves before apply; knob writes debounced 1.5 s |
 | `usbnet` | Versioned `settings` blob, 12 bytes | Mode, prefix, device/host addresses saved together; restart to apply |
-| `general` | Version-2 `settings` blob, 12 bytes (migrates 8-byte v1) | Scene-change sound and sleep timeout in minutes (default 60); save before apply |
-| `scenes` | Version-3 `settings` blob, 3304 bytes | 8 scenes, 64 sparse gesture bindings, 3 actions each; active selection committed with config |
+| `general` | Version-3 `settings` blob, 16 bytes | Scene-change sound, sound gain and sleep timeout in minutes (default 60); save before apply |
+| `scenes` | Version-7 `settings` blob, 3304 bytes; version-1 `order`, 12 bytes | 8 scenes, 64 gesture bindings, 3 actions each; active selection and stable IDs preserved; display/navigation order saved independently |
 | `demo` | Image MD5 and failed-start attempts | Recovery state, not user configuration |
 
 Invalid/missing settings blobs use their declared defaults. Normal OTA preserves
 NVS. A full factory-image restore overwrites it. Awake state, speaker volume,
 last event and temporary feedback are runtime state. The active scene and all action definitions/effects are saved settings.
-`auto_screen`, `auto_ring` and `auto_keys` control automatic brightness; the
-old page tour is retired.
-
-The light controller smooths successful raw samples and uses calibrated endpoints
-of either polarity. It scales each selected level independently and falls back
-to selected manual levels after five seconds without a good sample. Voltage
-conversion, supply scaling and remaining GPIO roles in custom code are working
-implementation choices; unrecovered analog topology is not documented as a
-factory finding.
+Ambient-light sampling and automatic dimming are removed as of 0.6.17. The
+lighting record retains its old 44-byte layout, reserving the retired fields;
+scene levels similarly reserve the old Auto byte. Neither byte affects output.
+Manual percentages and scene/General inheritance directly determine brightness.
+GPIO16 is no longer configured or sampled. Supply ADC1 telemetry remains; its
+voltage conversion and physical scaling are custom implementation choices,
+not recovered analog topology or factory findings.
 
 ## Build and tests
 
@@ -181,7 +181,7 @@ The historical name `test_http_ota.sh` now runs the broader host regression suit
 | `http_ota_test.cpp` | Authentication, chip/app/partition validation, abort/timeout, digest/finalization failures and chunked success |
 | `test_ota_upload.py` | Real image validation, secrets escaping, multipart/digest/auth and reboot/image verification |
 | `demo_levels_test.cpp` | Codec gain bounds and RGB scaling |
-| `lighting_settings_test.cpp` | Defaults, settings validation, calibration polarity/clamps, independent levels and missing-sensor fallback |
+| `lighting_settings_test.cpp` | Manual defaults/bounds and legacy byte-layout compatibility with retired fields ignored |
 | `factory_led_frame_test.cpp` | All channel bytes against the extracted factory table, GRB order, slot capacity and reset padding |
 | `rotary_detents_test.cpp` | Detents, partial turns, reversals, bounce and batched edges |
 | `clock_settings_test.cpp` | Hostname/fallback validation, legacy migration, timezone offsets and daylight saving |
@@ -280,14 +280,14 @@ Recorded on **2026-11-13** for this unit:
   remains distinct from its host tests.
 - NTP clock framebuffer checked with/without the sync colon, and without date,
   timezone, seconds, status text or outer ring.
-- Independent lighting levels, static/rainbow selection, calibration-driven Auto,
+- Independent lighting levels, static/rainbow selection,
   invalid-request handling and settings persistence exercised over the live API.
   Shared web UI checked at mobile width without JavaScript errors.
 - 256 KiB PSRAM pattern test passes; ES8311 ID `0x8311`, revision 1, responds at
   I2C `0x18`; microphone data streams without reported I/O errors.
-- Light readings change and have successful/error counters. At consolidation,
-  the live device reported hardware ready, a passing PSRAM test, no accumulated
-  light/audio I/O errors, active USB Ethernet/link and a DHCP ACK.
+- Earlier ADC2 samples did not establish an externally exposed ambient sensor.
+  Sampling, calibration and Auto were removed in 0.6.17. Hardware ready, passing
+  PSRAM, audio I/O counters and active USB Ethernet/DHCP were checked separately.
 - HTTP OTA verified the running application's MD5; USB enumeration, ECM link and
   the single DHCP lease were observed alongside display/audio/NTP operation.
 
@@ -295,7 +295,7 @@ These observations apply to the tested unit/image, not every C169 variant or a
 long-duration qualification. Exact panel variant/readback, physical LED spatial
 order/color calibration, charge transitions and battery state of charge remain
 unestablished. The supply estimate is not an independently calibrated battery
-measurement, and light values are not lux. Full factory restore boot is untested.
+measurement. Full factory restore boot is untested.
 
 Factory analysis has **not** established connector contacts, module-pad wiring,
 analog resistor/component identities or all peripheral GPIO roles. Hardware
@@ -956,3 +956,258 @@ The device-served script and page title contain no middle-dot separators.
 Scenes/bindings and General settings matched their pre-update snapshots; live
 UI edits were cancelled without settings writes. Evidence: ignored
 `backups/plain-labels/release/`.
+
+
+## Scene editor layout and HID key search (0.6.14)
+
+Scene identity moves into the heading beside the title. Idle screen/ring display
+share a desktop row, with ring/button color controls on the next row at equal
+width. On narrow screens they stack. This removes the old 70 px icon grid track
+that the fifth (button-color) setting could wrap into and collapse its dropdown.
+The existing icon picker, status area, brightness channels and form IDs remain.
+
+Keyboard HID usage is a custom searchable dropdown with 141 named keyboard-page
+keys, grouped by letters, numbers, navigation/editing, symbols, functions,
+numpad, system and international keys. Values follow the bundled TinyUSB HID
+constants. Labels include decimal usage; search also matches aliases and hex.
+Multi-word search matches all words. Binding summaries show the key name.
+A Custom HID code option keeps the existing 1–231 range and displays unlisted
+saved usages automatically. Its temporary UI mode uses a WeakSet, leaving the
+saved action shape unchanged; key choice preserves the modifier mask.
+
+Browser checks cover static ring/button widths and the relocated icon at
+320/375/768/1440 px; the 32-icon picker still updates the scene draft. HID checks
+cover named/alias/decimal/hex searches, modifiers, custom bounds, rerenders and
+save/reopen on mouse and touch. Existing custom-dropdown regression checks
+pass for General, scenes and ordered actions. No settings schema change.
+
+Both firmware builds passed. Application-only OTA matched the frozen MD5,
+cleared boot attempts and reconnected Bluetooth feedback. Existing scenes,
+bindings and General settings matched the pre-update snapshots. The served page
+passed static-color width/icon checks and HID name/alias searches, custom-code
+retention and desktop/mobile popup checks. All live edits were cancelled with
+no settings writes. Evidence: ignored `backups/scene-editor/release/`.
+
+
+## Source-key action lighting and header status (0.6.15)
+
+Action light feedback now targets only the binding input. Button 1–4 use their
+own LED, combinations use all participating buttons, and every knob gesture
+uses the ring. OPEN/REC have no associated LED. The four key overlays and ring
+have separate deadlines, so unrelated effects can overlap and expire without
+resetting one another. Screen feedback remains independently timed.
+
+The editor offers On using scene lighting, Off, static color, rainbow and
+percentage feedback for commands returning a percentage. Brightness either uses
+the resolved scene/General level, including Auto, or an absolute 0–100%
+override. The existing 250–10000 ms duration controls the feedback lifetime.
+Proportional ring feedback fills segments; a button scales only its own light.
+Sleep still forces all outputs off. Explicit commands changing the device's
+lighting settings keep their existing group behavior.
+
+Scene schema 7 packs action brightness in the unused high byte of RGB: 0–100
+are explicit percentages and 101 means inherit. The sound flag stays in the
+LED byte; API RGB stays 24-bit. Action and Stored remain 12 and 3304 bytes.
+Version 6 migrates to inherited brightness without changing RGB, sound,
+commands, bindings, scenes or active selection; older migrations chain through
+it. Recovery firmware must support schema 7.
+
+Connection, standby screen and last input now appear together in the top
+header. Fixed-height cells reserve space before polling; long text can scroll
+and has a tooltip. The mobile header uses two columns with last input below.
+The old sidebar and key-binding heading placements are removed.
+
+Host checks cover source masks, overlapping expiry, combinations, rollover,
+scene/override brightness, all light modes, remote percentage availability and
+legacy migration validation. Both production and USB-experiment builds pass.
+Browser fixtures verify source labels, brightness/color/duration save/reopen,
+mouse/touch controls and fixed header geometry at 320/375/768/1440 px.
+Frozen artifacts and live evidence are in ignored `backups/action-lights/release/`.
+
+Live API checks confirmed 80% red on Key 1 while other keys/ring stayed at
+scene levels, independent Key 2 off/expiry, a simultaneous 60% green knob
+ring, and cyan feedback on both members of Key 1+3 only. On at 0/100%,
+inherited scene brightness, invalid-input rejection and duration expiry passed.
+The complete saved scene/action definitions and General matched after a
+controlled restart. Physical inputs switched scenes during the post-restart
+output check, so that check did not qualify a steady idle baseline.
+The 500 ms fixture was too short for reliable HTTP-relay sampling; output
+checks used 3-second cues instead. The portable resolver tests cover short
+lifetimes independently of network latency.
+
+The device-served page passed header placement and fixed-geometry checks at
+320/375/768/1440 px, plus source labels, brightness/duration retention and
+cancelling edits with no settings writes or JavaScript errors. A visible
+red/green/blue/white pattern on Key 1/2/3/4 was confirmed by the user on
+2026-11-14, validating the custom firmware's slots 9/10/11/12 respectively.
+This does not establish the ring's physical direction/origin.
+
+Final verification matched the frozen running MD5 with hardware ready, boot
+attempts cleared, fresh Bluetooth feedback and zero input-queue drops, audio
+I/O errors or LED SPI errors. Both temporary scenes were removed; all original
+scene definitions, active selection and General settings matched the pre-OTA
+snapshot, with inherited brightness as the only added action field.
+
+
+## Symmetric ring fills (0.6.16)
+
+Scene Ring fill style selects Clockwise or Bottom to top (symmetric), applying
+to Bluetooth playback progress and knob proportional feedback, including
+Bluetooth volume. Existing scenes use Clockwise. The shared RingFill helper
+keeps playback and action coverage consistent, without changing timing or BLE
+volume/position state. Per-button proportional effects retain their intensity
+behavior. Sleep and stale feedback handling remain in the existing paths.
+
+A single red slot-0 check was observed at 12 o'clock by the user on 2026-11-14.
+For the nine-pixel ring, symmetric fill starts with slots 4/5 at the bottom,
+then 3/6, 2/7 and 1/8, reaching top slot 0 last. Paired pixels share partial
+intensity equally. At 0% all are dark; at 100% all are full. Coverage is monotonic
+and total intensity follows the percentage to within one permille-pixel of
+integer rounding. No floating point or frame buffer is added to firmware.
+
+ring_style uses a formerly zero reserved scene byte; schema stays 7 and the
+record stays 3304 bytes. The API accepts clockwise/bottom_to_top, validates
+the enum atomically and reports it in scene and state objects. The earlier
+0.6.15 implementation ignores this reserved byte if used as a recovery image.
+The scene page places idle screen/ring display/style across a desktop row,
+with ring/button colors at equal widths below; narrow layouts wrap or stack.
+
+Host tests sweep all 1001 progress levels for symmetry, bounds, monotonicity,
+total intensity and 0/100% endpoints, alongside unchanged clockwise coverage,
+rotated origins and even-count geometry. The production action resolver tests
+cover Bluetooth-returned percentages with the same helper. Scene validation
+checks style defaults, allowed values and unchanged storage size. Both builds
+and the host suite pass. Browser fixtures pass style save/reload, per-scene
+isolation, clockwise round trips and layout at 320/375/768/1440 px, including
+touch input. Frozen application/ELF and evidence: ignored
+`backups/ring-styles/release/`.
+
+Application-only OTA matched the frozen MD5, with hardware ready and the boot
+guard cleared. Hardware frame checks at 0/10/50/90/100% matched symmetric
+coverage exactly, leaving all key LEDs unchanged; clockwise 50% remained
+unchanged. A live BLE playback sample at 624 permille matched the symmetric
+fill, including its partially lit boundary pair. Invalid styles were rejected
+without changing settings. A controlled restart retained the style and every
+scene/action/General field. The temporary scene was removed and the original
+active scene restored, with zero input-queue drops, audio I/O errors or LED
+SPI errors and fresh BLE feedback.
+
+The device-served page also passed 320/375/768/1440 px header/control checks,
+custom style-menu placement and dirty/reload behavior with no settings writes
+or JavaScript errors.
+
+
+## Remove ambient-light feature (0.6.17)
+
+The unit has no established usable ambient sensor exposed outside its case.
+ADC2/GPIO16 configuration and sampling, sample smoothing, calibration conversion,
+automatic scaling and light-related counters/state are removed from production
+firmware. The board header no longer assigns GPIO16 a light-sensor role.
+ADC1 supply estimation and charge telemetry remain separate.
+
+General and scene Auto checkboxes, sensor readings/range/capture/calibration,
+associated browser state and polling are removed. Status publishes no light
+or Auto/calibration fields. Retired form parameters return HTTP 400 before
+applying any settings. Manual screen/ring/key levels, per-scene Use General
+or Override, action brightness, ring styles, blank/sleep and wake behavior
+remain. The Bluetooth switch keeps its inline checkbox styling.
+
+No NVS migration or reset is needed: lighting v1 stays 44 bytes with retired
+words reserved, and scene v7 stays 3304 bytes with the former Auto byte reserved
+in each four-byte level. Validation/resolution ignores these bytes, so previously
+enabled Auto flags cannot dim output. Manual values, mode/color, scene/action
+definitions and all unrelated records are preserved. The old code paths in
+earlier release sections above are historical; Auto is no longer available.
+
+Host tests check manual defaults/bounds, actual legacy word offsets with Auto
+enabled, ignored obsolete bytes and scene-level inheritance/override with the
+legacy Auto byte set. Both builds and the host suite pass. Browser fixtures
+pass at 320/375/768/1440 px, including touch, with every ambient/Auto status
+field absent. General slider requests and scene save/reopen contain only manual
+brightness fields; Bluetooth and ring-style controls remain usable.
+
+Application-only OTA matched the frozen MD5, with hardware ready and cleared
+boot attempts. Live API tests rejected every retired General/scene parameter
+atomically, exercised independent General levels 37/52/68% and scene overrides
+19/31/47% against exact composed LED frames, and checked Use General restores
+selected levels. A restart retained manual selections, overrides and all
+scene/action/General fields without light telemetry returning. Original levels,
+active scene and definitions were restored and the temporary scene removed,
+with zero input-queue, LED SPI or audio I/O errors. Frozen artifacts/evidence:
+ignored `backups/manual-brightness/release/`.
+
+The device-served page passed General/scene manual-control, sensor-UI absence,
+Bluetooth/header and reload checks at 320/375/768/1440 px with zero settings
+writes or JavaScript errors. Final status confirmed the expected running MD5,
+cleared boot guard, hardware ready and fresh BLE feedback.
+
+
+## Connection footer restored (0.6.18)
+
+Ready/version and IP return to the bottom left of the sticky desktop sidebar,
+using the existing connection ID and status polling. Standby screen and last
+input remain in the top header, now with two columns. The mobile header stacks
+these two fields and retains the earlier compact navigation behavior with the
+sidebar footer hidden. Connection text has a fixed two-line scrolling area,
+so long unavailable/error text cannot shift the navigation. Header status also
+keeps its reserved height. No API, lighting or NVS behavior changes.
+
+The production build and browser layout checks pass at 320/375/768/1440 px,
+including live version/IP rendering, footer position and unchanged geometry
+with very long status strings. Evidence: ignored `backups/connection-footer/`.
+
+Application-only OTA matched the frozen MD5 and reached ready with cleared
+boot attempts, fresh BLE feedback and zero input/audio/LED errors. The served
+page passed footer/header placement and live version/IP checks at all four
+widths, without JavaScript errors or settings writes. Ring color/display/style
+were edited externally during the test window; the latest values were retained.
+Release evidence is in `backups/connection-footer/release/`.
+
+
+## Scene order and compact header (0.6.19)
+
+The arrow controls beside + Scene move the selected tab without activating it
+or discarding its unsaved settings draft. New scenes append even when they
+reuse a lower numeric ID. Default can move while its name/delete protection
+remains. API scenes are returned in saved order, driving tab navigation and
+target menus. Next/Previous follow this order with wraparound. Explicit switch
+targets and all bindings keep stable scene IDs. Direct-selection tones use
+displayed positions; explicit Next/Previous retain their wraparound direction.
+
+SceneOrder stores a versioned 12-byte permutation of all eight IDs in the
+existing scenes namespace's order key. Missing/corrupt order falls back to
+numeric IDs without resetting scene definitions. Unused IDs are filtered out
+at display/navigation time. Creation moves the unused ID to the tail and saves
+order before saving the new scene; a failed scene write therefore cannot
+reorder existing visible scenes. Deletion needs only the normal scene write.
+The 3304-byte settings schema and other NVS records are unchanged. Reorder
+validates the ID/position and saves before applying. order_stored reports the
+order record separately from settings. Reorder updates epoch/revision without
+activating a scene or producing a scene-change tone.
+
+The desktop header now aligns page title, a two-line active-scene block and a
+two-line standby/input block. Active scene has a subtle divider instead of a
+boxed badge. Fixed heights and ellipsis/tooltips retain compact geometry.
+Mobile keeps title/active scene together and moves device status below.
+Connection/version/IP stay in the desktop sidebar footer. The Sound and
+Bluetooth explanatory paragraphs were removed without changing controls.
+
+Both builds and the host suite pass, including scene-order moves, invalid
+permutations/positions, wraparound, sparse IDs, append/reuse, Default protection,
+unchanged settings/binding bytes and cue direction. Browser fixtures pass at
+320/375/768/1440 px (including touch), checking ordering, retained drafts, save
+failures, append/delete, keyboard navigation, header alignment, long status
+strings and removed paragraphs without JS errors or horizontal overflow.
+
+Application-only OTA matched the frozen MD5 and reached hardware ready with
+cleared boot attempts. Temporary scenes verified append/reuse, reorder without
+activation, invalid-position rejection, Default delete rejection, Next/Previous
+wrap and stable explicit targets. Restart retained the order and temporary
+bindings. Cleanup deleted only temporary scenes, retaining original scenes'
+relative order and any current user edits, with zero input/audio/LED errors.
+Frozen artifacts/evidence: ignored `backups/scene-order/release/`.
+
+The device-served page passed order-control/tab-order, inline two-line header,
+footer and removed-help checks at 320/375/768/1440 px without JavaScript errors
+or settings writes. Final status confirmed the expected MD5, hardware ready,
+cleared boot guard, fresh BLE feedback and saved scene order.

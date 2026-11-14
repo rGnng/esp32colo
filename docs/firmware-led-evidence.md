@@ -123,8 +123,12 @@ Both the software capacity and waveform have now been corrected. The earlier
 documentation's parallel-branch claim was incorrect and has been removed.
 The current custom implementation uses ring slots 0–8 and key slots 9–12;
 slot 13 stays off during normal output and temporary color tests. This grouping
-is a custom implementation choice rather than a recovered physical layout. Exact key-to-pixel spatial
-order and color calibration can be refined separately if needed.
+is a custom implementation choice rather than a recovered factory layout.
+A separate custom-firmware visual check on 2026-11-14 confirmed slots 9/10/11/12
+as Button 1/2/3/4: the user observed the expected red/green/blue/white pattern.
+A later single red slot-0 check on the same date was observed at 12 o’clock.
+The custom symmetric fill therefore treats slot 0 as top; ring direction and
+color calibration remain separately unqualified.
 
 The [broader GPIO teardown](firmware-gpio-evidence.md) records the independently
 recovered display, button, encoder and audio configurations. The original image

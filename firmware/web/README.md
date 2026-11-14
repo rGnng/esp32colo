@@ -43,7 +43,7 @@ markup; APIs and NVS remain the responsibility of the firmware services.
 The 0.6.1 panels include:
 
 - General: WiFi status and SSID/password dialog, USB, NTP/timezone, independent
-  lighting/Auto controls, scene-change sound, inactivity timeout, sound-effects gain and Bluetooth
+  manual lighting controls, scene-change sound, inactivity timeout, sound-effects gain and Bluetooth
   enable/pair/forget/status.
 - Scenes: Clock/Blank/Bluetooth volume/playback idle screen, icon-only selector with named tooltips,
   scene colors/brightness overrides, playback-progress ring, ordered modifier
@@ -101,3 +101,36 @@ flash, without a new library, CDN, network poll or settings schema.
 
 Use plain labels and sentences throughout the interface. Do not use middle-dot
 characters as separators in labels, menus, status text, summaries or tooltips.
+
+The scene icon is in the scene heading. Screen/ring behavior and the two color
+controls use equal desktop columns and stack on narrow screens, leaving room
+for static-color swatches. Keyboard HID key actions use a grouped, searchable
+picker with 141 named keys. Search includes names, decimal/hex codes and aliases;
+Custom HID code retains the original 1–231 input for unlisted usages. Modifier
+masks are independent and retained when changing keys.
+
+Action lighting is scoped to the binding's physical input: individual key,
+combination members, or knob ring. The editor exposes on/off/color/brightness
+and the existing feedback duration. Brightness can inherit scene/General or
+use an absolute percentage, stored with the action. Standby screen and last
+input live in a fixed-height strip in the top header. Connection/version and
+IP are in the desktop sidebar footer, hidden in the compact mobile layout.
+The binding-table heading has no live status text.
+
+Scene Ring fill style selects clockwise or symmetric bottom-to-top coverage
+for playback progress and knob percentage feedback, including Bluetooth volume.
+The three behavior controls share a desktop row; ring/button colors retain
+equal widths below. Narrow layouts use two columns or stack. The setting is
+serialized as ring_style and stays separate from ring_display and light color.
+
+Ambient-light sensing, calibration and Auto checkboxes are removed from General
+and scenes. Polling needs no light/Auto fields. Manual percentages, per-scene
+Use General/Override, action lighting, sleep and ring fill styles remain.
+
+Scene order uses the arrow controls beside + Scene. Moves save immediately and
+retain the selected scene ID, active scene and any unsaved settings draft. New
+scenes append. Tab navigation and target-scene choices consume API array order.
+The header aligns page title, a two-line active-scene block and a two-line
+standby/input block on desktop; the latter moves below on narrow screens.
+Both status blocks retain fixed height. The Sound and Bluetooth explanatory
+paragraphs were removed; their controls and feedback remain.

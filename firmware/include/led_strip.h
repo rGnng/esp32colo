@@ -5,6 +5,7 @@ namespace LedStrip {
 bool begin();
 bool ready();
 void setPixel(size_t index, uint32_t rgb);
+uint32_t pixelColor(size_t index);
 void show();
 int error();
 uint32_t transfers();

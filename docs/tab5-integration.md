@@ -116,14 +116,20 @@ or decorative boxes. When feedback is unavailable, both Bluetooth screens show
 only the locally bundled `andrsrxn:bluetooth-connecting` icon, without connection
 text. Glyph data stays in flash; no whole font is loaded into RAM.
 
-Scene **Ring display → Bluetooth playback progress (clockwise)** fills the
+Scene **Ring display → Bluetooth playback progress** fills the
 physical LED ring from elapsed/duration using scene colors and brightness.
 Playing uses a shared smoothed local clock between position packets; repeated
 heartbeats/ACKs do not reset it. Pause freezes, Stop clears,
 and unknown/stale state clears the progress fill. Partial pixels smooth the nine
 LED segments. The progress indicator is independent of the LCD idle screen.
-Explicit action light effects temporarily take priority, then return to progress;
-button LEDs keep their scene lighting. Sleep turns both groups off.
+Scene **Ring fill style** offers **Clockwise** or **Bottom to top (symmetric)**.
+Symmetric fill lights both lower sides together, rising to the top at 100%.
+It also controls knob proportional feedback for Bluetooth volume, using the
+same partial-pixel renderer. Existing scenes retain Clockwise until changed.
+Knob action light effects temporarily take priority over ring progress, then
+return to progress. Button actions affect only their own LEDs; combinations
+affect all participating buttons. Each target restores its scene lighting after
+the configured duration. Sleep turns both groups off.
 
 General **Sound effects volume** is saved independently of brightness and remote
 MPD volume. It scales local generated tones, including scene-change cues; 0% is

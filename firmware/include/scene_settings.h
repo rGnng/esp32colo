@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include "coloplay_ble_protocol.h"
+#include "ring_fill.h"
 
 namespace SceneSettings {
 constexpr int kSceneCount = 8, kBindingCount = 64, kActionCount = 3, kInputCount = 7;
@@ -12,7 +13,7 @@ enum Type : uint8_t { kNone, kNextScene, kPreviousScene, kSwitchScene,
   kScreenChange, kScreenSet, kRingChange, kRingSet, kKeysChange, kKeysSet,
   kVolumeChange, kVolumeSet, kRainbow, kStatic, kToggleAwake, kSync, kTone,
   kBluetoothVolume,kBluetoothMedia,kBluetoothKey,kTypeCount };
-enum Led : uint8_t { kInherit, kProportional, kFeedbackRainbow, kFeedbackStatic, kOff, kLedCount };
+enum Led : uint8_t { kInherit, kProportional, kFeedbackRainbow, kFeedbackStatic, kOff, kOn, kLedCount };
 enum Screen : uint8_t { kUnchanged, kClock, kBlank, kBluetoothVolumeScreen, kBluetoothPlaybackScreen, kScreenCount };
 constexpr const char *kInputs[] = {"key1","key2","key3","key4","knob","open","rec"};
 constexpr const char *kGestures[] = {"single","double","triple","hold","hold_release","left","right","press_left","press_right"};
@@ -20,18 +21,24 @@ constexpr const char *kTypes[] = {"none","next_scene","previous_scene","switch_s
   "screen_change","screen_set","ring_change","ring_set","keys_change","keys_set",
   "volume_change","volume_set","rainbow","static","toggle_awake","sync_time","tone",
   "bluetooth_volume","bluetooth_media","bluetooth_key"};
-constexpr const char *kLeds[] = {"inherit","proportional","rainbow","static","off"};
+constexpr const char *kLeds[] = {"inherit","proportional","rainbow","static","off","on"};
 constexpr const char *kScreens[] = {"unchanged","clock","blank","bluetooth_volume","bluetooth_playback"};
 struct Action {
   // Keep the on-flash action at 12 bytes: the high LED byte bit is audio feedback.
   static constexpr uint8_t kSound = 0x80;
+  static constexpr uint8_t kSceneBrightness = 101;
   uint8_t type = kNone, target = 0, led = kInherit, screen = kUnchanged;
   int16_t value = 0;
   uint16_t feedbackMs = 1500;
-  uint32_t color = 0x40FFAA;
+  // RGB occupies the low 24 bits; the high byte stores brightness/inheritance.
+  uint32_t color = (uint32_t(kSceneBrightness)<<24) | 0x40FFAA;
   uint8_t ledEffect() const { return led & ~kSound; }
   bool soundEnabled() const { return led & kSound; }
   void setSound(bool enabled) { led = ledEffect() | (enabled ? kSound : 0); }
+  uint32_t colorRgb() const { return color & 0xFFFFFF; }
+  void setColorRgb(uint32_t rgb) { color = (color & 0xFF000000) | (rgb & 0xFFFFFF); }
+  int ledBrightness() const { return (color>>24)==kSceneBrightness?-1:int(color>>24); }
+  void setLedBrightness(int percent) { color=colorRgb() | (uint32_t(percent<0?kSceneBrightness:percent)<<24); }
 };
 struct BindingV1 {
   uint8_t scene = 0, input = 0, gesture = 0, count = 0;
@@ -59,13 +66,14 @@ struct StoredV2 {
   BindingV1 bindings[kBindingCount];
 };
 struct Level {
-  uint8_t overrideGeneral=0,percent=70,automatic=0,reserved=0;
+  // Former automatic-dimming byte stays reserved for existing scene records.
+  uint8_t overrideGeneral=0,percent=70,reserved[2]={};
 };
 enum RingDisplay : uint8_t { kRingLighting, kRingBluetoothProgress, kRingDisplayCount };
 constexpr const char *kRingDisplays[]={"lighting","bluetooth_progress"};
-struct Scene : SceneV2 { Level levels[3]; uint8_t icon=0,ringDisplay=kRingLighting,reserved2[2]={}; };
+struct Scene : SceneV2 { Level levels[3]; uint8_t icon=0,ringDisplay=kRingLighting,ringStyle=RingFill::kClockwise,reserved2=0; };
 struct Stored {
-  uint32_t version = 6;
+  uint32_t version = 7;
   uint8_t active = 0, reserved[3] = {};
   Scene scenes[kSceneCount];
   Binding bindings[kBindingCount];
@@ -99,7 +107,7 @@ inline bool validName(const char *name) {
 }
 inline bool validAction(const Stored &s, const Action &a) {
   if (a.type >= kTypeCount || a.ledEffect() >= kLedCount || a.screen >= kScreenCount ||
-      a.color > 0xFFFFFF || a.feedbackMs < 250 || a.feedbackMs > 10000) return false;
+      (a.color>>24) > Action::kSceneBrightness || a.feedbackMs < 250 || a.feedbackMs > 10000) return false;
   if (a.type == kSwitchScene && !exists(s, a.target)) return false;
   if (a.ledEffect() == kProportional && !percentType(a.type)) return false;
   if (a.type>=kScreenChange&&a.type<=kVolumeSet && (a.value > 100 || a.value < (changeType(a.type) ? -100 : 0))) return false;
@@ -109,10 +117,10 @@ inline bool validAction(const Stored &s, const Action &a) {
   if (a.type == kTone && (a.value < 100 || a.value > 4000)) return false;
   return true;
 }
-inline bool validLevel(const Level &level){return level.overrideGeneral<=1&&level.percent<=100&&level.automatic<=1;}
-inline Level resolvedLevel(const Level &scene,uint32_t general,bool automatic) {
+inline bool validLevel(const Level &level){return level.overrideGeneral<=1&&level.percent<=100;}
+inline Level resolvedLevel(const Level &scene,uint32_t general) {
   if(scene.overrideGeneral)return scene;
-  Level out;out.percent=general;out.automatic=automatic;return out;
+  Level out;out.percent=general;return out;
 }
 inline bool validLight(const Light &light) { return light.mode < kLightingModeCount && light.color <= 0xFFFFFF; }
 // General mode is resolved at render time, so later General changes still apply.
@@ -120,11 +128,11 @@ inline Light resolveLighting(const Light &scene, bool generalStatic, uint32_t ge
   return scene.mode == kGeneralLighting ? Light{generalStatic ? kSceneStatic : kSceneRainbow, generalColor} : scene;
 }
 inline bool valid(const Stored &s) {
-  if (s.version != 6 || !exists(s, 0) || !exists(s, s.active) || !validName(s.scenes[0].name) || std::strcmp(s.scenes[0].name, "Default")) return false;
+  if (s.version != 7 || !exists(s, 0) || !exists(s, s.active) || !validName(s.scenes[0].name) || std::strcmp(s.scenes[0].name, "Default")) return false;
   for (int i=0;i<kSceneCount;++i) {
     const auto &scene=s.scenes[i];
     if (scene.used > 1 || (scene.used && (!validName(scene.name) || scene.screen < kClock || scene.screen >= kScreenCount || !validLight(scene.ring) || !validLight(scene.keys)))) return false;
-    if(scene.used){if(scene.icon>=32||scene.ringDisplay>=kRingDisplayCount)return false;for(const auto &level:scene.levels)if(!validLevel(level))return false;}
+    if(scene.used){if(scene.icon>=32||scene.ringDisplay>=kRingDisplayCount||scene.ringStyle>=RingFill::kStyleCount)return false;for(const auto &level:scene.levels)if(!validLevel(level))return false;}
     if (scene.used) for (int j=0;j<i;++j) if (s.scenes[j].used&&!std::strcmp(scene.name,s.scenes[j].name)) return false;
   }
   for (int i = 0; i < kBindingCount; ++i) {
@@ -140,14 +148,25 @@ inline bool valid(const Stored &s) {
   return true;
 }
 // Validate the complete legacy record before replacing the caller's settings.
+inline bool migrateV6(Stored &settings){
+  if(settings.version!=6)return false;
+  for(const auto &b:settings.bindings)if(b.count){
+    if(b.count>kActionCount)return false;
+    for(int i=0;i<b.count;++i)if(b.actions[i].ledEffect()>=kOn||b.actions[i].color>0xFFFFFF)return false;
+  }
+  settings.version=7;
+  if(!valid(settings)){settings.version=6;return false;}
+  for(auto &b:settings.bindings)for(auto &a:b.actions)a.setLedBrightness(-1);
+  return true;
+}
 inline bool migrateV5(Stored &settings,bool sceneSound=true){
   if(settings.version!=5)return false;
   for(const auto &b:settings.bindings)if(b.count){
     if(b.count>kActionCount)return false;
-    for(int i=0;i<b.count;++i)if(b.actions[i].led>=kLedCount)return false;
+    for(int i=0;i<b.count;++i)if(b.actions[i].led>=kOn)return false;
   }
   settings.version=6;
-  if(!valid(settings)){settings.version=5;return false;}
+  if(!migrateV6(settings)){settings.version=5;return false;}
   for(auto &b:settings.bindings)for(int i=0;i<b.count;++i){
     auto &a=b.actions[i];
     a.setSound(a.type==kTone||(sceneSound&&a.type>=kNextScene&&a.type<=kSwitchScene));

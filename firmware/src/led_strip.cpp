@@ -47,6 +47,7 @@ bool ready() { return gDevice != nullptr && gError == ESP_OK; }
 void setPixel(size_t index, uint32_t rgb) {
   if (index < FactoryLedFrame::kPixels) gPixels[index] = rgb & 0xFFFFFF;
 }
+uint32_t pixelColor(size_t index) { return index<FactoryLedFrame::kPixels?gPixels[index]:0; }
 
 void show() {
   if (!gDevice) return;

@@ -1,6 +1,7 @@
 #include "device_log.h"
 #include "input_trace.h"
 #include "input_worker.h"
+#include "action_lighting.h"
 #include "hardware_demo.h"
 #include "audio_demo.h"
 #include "board_pins.h"
@@ -66,9 +67,8 @@ int gPage = kClockPage;
 LightingSettings::Stored gLighting;
 Preferences gLightingPrefs;
 bool gLightingPrefsOpen = false, gLightingStored = false;
-bool gLightingDirty = false, gHaveLight = false, gLightUsable = false;
-uint32_t gLightingChangedAt = 0, gLastLightAt = 0;
-float gFilteredLight = 0, gAutoFactor = 1;
+bool gLightingDirty = false;
+uint32_t gLightingChangedAt = 0;
 uint8_t gSceneShown=0;
 uint32_t gSceneOverlayUntil=0;
 int gScreenLevel = 70, gRingLevel = 70, gKeysLevel = 70;
@@ -84,10 +84,9 @@ uint32_t gLastMetrics = 0, gPreviousFrames = 0, gPreviousTe = 0;
 uint32_t gLastLeds = 0, gLedFrames = 0, gPsramTestBytes = 0;
 float gFps = 0, gTeHz = 0;
 volatile uint32_t gTePulses = 0;
-int gSupplyRaw = 0, gLightRaw = -1;
-uint32_t gSupplyMv = 0, gLightMv = 0, gLightReadings = 0, gLightErrors = 0;
-esp_err_t gLightError = ESP_OK;
-esp_adc_cal_characteristics_t gSupplyCal = {}, gLightCal = {};
+int gSupplyRaw = 0;
+uint32_t gSupplyMv = 0;
+esp_adc_cal_characteristics_t gSupplyCal = {};
 enum Stage : uint32_t {
   kNotStarted, kPsram, kEncoder, kSensors, kLeds, kBacklight,
   kLcdInit, kFramebuffer, kLcdTe, kAudio, kFirstFrame, kRunning, kLedPower, kStageCount
@@ -117,15 +116,9 @@ void setBacklight() {
 }
 
 void updateBrightness() {
-  gLightUsable = gHaveLight && uint32_t(millis() - gLastLightAt) <= 5000;
-  gAutoFactor = gLightUsable ? LightingSettings::factor(
-      gFilteredLight, gLighting.darkRaw, gLighting.brightRaw) : 1;
-  const auto screen=SceneSettings::resolvedLevel(SceneService::brightness(0),gLighting.screen,gLighting.autoScreen);
-  const auto ring=SceneSettings::resolvedLevel(SceneService::brightness(1),gLighting.ring,gLighting.autoRing);
-  const auto keys=SceneSettings::resolvedLevel(SceneService::brightness(2),gLighting.keys,gLighting.autoKeys);
-  gScreenLevel = LightingSettings::level(screen.percent, screen.automatic, gLightUsable, gAutoFactor);
-  gRingLevel = LightingSettings::level(ring.percent, ring.automatic, gLightUsable, gAutoFactor);
-  gKeysLevel = LightingSettings::level(keys.percent, keys.automatic, gLightUsable, gAutoFactor);
+  gScreenLevel = SceneSettings::resolvedLevel(SceneService::brightness(0),gLighting.screen).percent;
+  gRingLevel = SceneSettings::resolvedLevel(SceneService::brightness(1),gLighting.ring).percent;
+  gKeysLevel = SceneSettings::resolvedLevel(SceneService::brightness(2),gLighting.keys).percent;
   setBacklight();
 }
 
@@ -161,21 +154,6 @@ void readSensors() {
   // Legacy supply estimate: calibrated ADC x3. The physical divider and
   // scale are not established by the factory analysis; this is not battery SOC.
   gSupplyMv = esp_adc_cal_raw_to_voltage(gSupplyRaw, &gSupplyCal) * 3;
-  int light = 0;
-  gLightError = adc2_get_raw(ADC2_CHANNEL_5, ADC_WIDTH_BIT_12, &light);
-  if (gLightError == ESP_OK) {
-    gLightRaw = light;
-    gLightMv = esp_adc_cal_raw_to_voltage(light, &gLightCal);
-    gFilteredLight = gHaveLight ? gFilteredLight + 0.2f * (light - gFilteredLight) : light;
-    gHaveLight = true;
-    gLastLightAt = millis();
-    ++gLightReadings;
-  } else {
-    ++gLightErrors;
-    // Keep the last good measurement and publish the error explicitly.
-    // WiFi can contend with ADC2; a failed read is not a dark-room value.
-  }
-  updateBrightness();
 }
 
 void checkPsram() {
@@ -337,23 +315,24 @@ void animateLeds(uint32_t now) {
     uint32_t color = gLedTest ? kTestColors[gLedTest] : Adafruit_NeoPixel::gamma32(
         light.mode == SceneSettings::kSceneStatic ? light.color
         : Adafruit_NeoPixel::ColorHSV(hue, 220, 255));
-    if(!gLedTest&&i<Board::kRingPixels&&SceneService::ringDisplay()==SceneSettings::kRingBluetoothProgress){
-      const int coverage=progress<0?0:PlaybackRing::coverage(progress,i,Board::kRingPixels);
-      color=DemoLevels::scaleRgb(color,(coverage*255+500)/1000);
-    }
-    if (!gLedTest && feedback.active) {
-      using namespace SceneSettings;
-      if (feedback.led==kOff) color=0;
-      else if (feedback.led==kFeedbackStatic) color=Adafruit_NeoPixel::gamma32(feedback.color);
-      else if (feedback.led==kFeedbackRainbow) color=Adafruit_NeoPixel::gamma32(Adafruit_NeoPixel::ColorHSV(hue,220,255));
-      else if (feedback.led==kProportional && i<Board::kRingPixels&&(!feedback.remote||(remote.fresh&&remotePercent>=0))) {
-        const int percent=feedback.remote?remotePercent:feedback.percent;
-        const int coverage=constrain(percent*Board::kRingPixels-i*100,0,100);
-        color=DemoLevels::scaleRgb(Adafruit_NeoPixel::gamma32(feedback.color),LightingSettings::pwm(coverage));
+    int level=i<Board::kKeyPixelStart?gRingLevel:gKeysLevel;
+    if(!gLedTest){
+      const bool isRing=i<Board::kRingPixels;
+      const int key=i-Board::kKeyPixelStart;
+      const ActionFeedback::Light empty;
+      const auto &cue=isRing?feedback.ring:key>=0&&key<Board::kKeyPixels?feedback.keys[key]:empty;
+      ActionLighting::Result effect{color,level,false};
+      if(cue.led!=SceneSettings::kInherit)effect=ActionLighting::resolve(cue,color,Adafruit_NeoPixel::gamma32(cue.color),
+        cue.led==SceneSettings::kFeedbackRainbow?Adafruit_NeoPixel::gamma32(Adafruit_NeoPixel::ColorHSV(hue,220,255)):0,
+        level,isRing,i,Board::kRingPixels,remote.fresh&&remote.available,remotePercent,SceneService::ringStyle(),Board::kRingTopPixel);
+      color=effect.color;level=effect.brightness;
+      if(isRing&&!effect.applied&&SceneService::ringDisplay()==SceneSettings::kRingBluetoothProgress){
+        const int coverage=progress<0?0:PlaybackRing::coverage(progress,i,Board::kRingPixels,SceneService::ringStyle(),Board::kRingTopPixel);
+        color=DemoLevels::scaleRgb(color,(coverage*255+500)/1000);
       }
     }
-    if (i >= Board::kKeyPixelStart + Board::kKeyPixels) color = 0;
-    const int level = !gAwake ? 0 : i < Board::kKeyPixelStart ? gRingLevel : gKeysLevel;
+    if(i>=Board::kKeyPixelStart+Board::kKeyPixels)color=0;
+    if(!gAwake)level=0;
     LedStrip::setPixel(i, DemoLevels::scaleRgb(color, LightingSettings::pwm(level)));
   }
   LedStrip::show();
@@ -395,7 +374,7 @@ int applyAction(const SceneSettings::Action &a, int repetitions) {
       AudioDemo::setVolume(a.type==kVolumeChange?AudioDemo::snapshot().volume+a.value*repetitions:a.value);
       result=AudioDemo::snapshot().volume; break;
     case kRainbow: gLighting.mode=LightingSettings::kRainbow; lightingChanged=true; break;
-    case kStatic: gLighting.mode=LightingSettings::kStatic; gLighting.color=a.color; lightingChanged=true; break;
+    case kStatic: gLighting.mode=LightingSettings::kStatic; gLighting.color=a.colorRgb(); lightingChanged=true; break;
     case kToggleAwake: gAwake=!gAwake;gIdle.activity(millis());break;
     case kSync: ClockService::requestSync(); break;
     case kTone: break; // SceneService applies the per-action sound switch.
@@ -448,9 +427,7 @@ void begin() {
   setStage(kSensors);
   adc1_config_width(ADC_WIDTH_BIT_12);
   adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_DB_12);
-  adc2_config_channel_atten(ADC2_CHANNEL_5, ADC_ATTEN_DB_12);
   esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, 1100, &gSupplyCal);
-  esp_adc_cal_characterize(ADC_UNIT_2, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, 1100, &gLightCal);
   readSensors();
 
   setStage(kLeds);
@@ -565,7 +542,6 @@ String statusJson() {
   json += ",\"frames\":" + String(gFrames) + ",\"fps\":" + String(gFps, 1);
   json += ",\"te_pulses\":" + String(gTePulses) + ",\"te_hz\":" + String(gTeHz, 1);
   json += ",\"brightness\":" + String(gLighting.screen);
-  json += ",\"auto_brightness\":" + String(gLighting.autoScreen ? "true" : "false");
   json += ",\"effective_brightness\":" + String(screenVisible(millis()) ? gScreenLevel : 0) + ",\"spi_hz\":40000000}";
   const auto inputs=InputWorker::snapshot();
   json += ",\"inputs\":{\"ready\":"+String(inputs.ready?"true":"false")+",\"sample_period_ms\":1,\"samples\":"+String(inputs.samples)+",\"max_sample_gap_us\":"+String(inputs.maxGapUs)+",\"queue_drops\":"+String(inputs.dropped)+"}";
@@ -583,8 +559,6 @@ String statusJson() {
   json += ",\"brightness\":" + String(LightingSettings::pwm(gLighting.ring));
   json += ",\"ring_brightness\":" + String(gLighting.ring);
   json += ",\"keys_brightness\":" + String(gLighting.keys);
-  json += ",\"auto_ring\":" + String(gLighting.autoRing ? "true" : "false");
-  json += ",\"auto_keys\":" + String(gLighting.autoKeys ? "true" : "false");
   const auto remote=BluetoothService::snapshot();
   json += ",\"progress_permille\":"+String(PlaybackRing::progress(remote.fresh&&remote.available&&remote.positionValid,remote.playback,remote.positionMs,remote.durationMs));
   json += ",\"ring_effective\":" + String(gAwake ? gRingLevel : 0);
@@ -593,16 +567,15 @@ String statusJson() {
   char color[8];
   snprintf(color, sizeof(color), "#%06lx", static_cast<unsigned long>(gLighting.color));
   json += ",\"color\":\"" + String(color) + "\",\"test_mode\":" + String(gLedTest);
-  json += ",\"frames\":" + String(gLedFrames) + "}";
+  json += ",\"frames\":" + String(gLedFrames) + ",\"key_colors\":[";
+  for(int i=0;i<Board::kKeyPixels;++i){if(i)json+=',';snprintf(color,sizeof(color),"#%06lx",static_cast<unsigned long>(LedStrip::pixelColor(Board::kKeyPixelStart+i)));json+='"';json+=color;json+='"';}
+  json+="],\"ring_colors\":[";
+  for(int i=0;i<Board::kRingPixels;++i){if(i)json+=',';snprintf(color,sizeof(color),"#%06lx",static_cast<unsigned long>(LedStrip::pixelColor(i)));json+='"';json+=color;json+='"';}
+  json+="]}";
   json += ",\"lighting\":{\"stored\":" + String(gLightingStored && !gLightingDirty ? "true" : "false");
-  json += ",\"auto_dark_raw\":" + String(gLighting.darkRaw);
-  json += ",\"auto_bright_raw\":" + String(gLighting.brightRaw);
-  json += ",\"sensor_usable\":" + String(gLightUsable ? "true" : "false") + "}";
+  json += "}";
   json += ",\"sensors\":{\"vdd_raw\":" + String(gSupplyRaw);
   json += ",\"vdd_mv_approx\":" + String(gSupplyMv);
-  json += ",\"light_raw\":" + String(gLightRaw) + ",\"light_mv\":" + String(gLightMv);
-  json += ",\"light_error\":" + String(gLightError);
-  json += ",\"light_readings\":" + String(gLightReadings) + ",\"light_errors\":" + String(gLightErrors);
   json += ",\"charge_pin_low\":" + String(digitalRead(Board::kCharge) == LOW ? "true" : "false") + "}";
   json += ",\"psram\":{\"test_passed\":" + String(gPsramTest ? "true" : "false");
   json += ",\"tested_bytes\":" + String(gPsramTestBytes);
@@ -638,12 +611,9 @@ bool configure(WebServer &server, String &error) {
   };
   if (!setting("brightness", candidate.screen, 100) ||
       !setting("ring_brightness", candidate.ring, 100) ||
-      !setting("keys_brightness", candidate.keys, 100) ||
-      !setting("auto_screen", candidate.autoScreen, 1) ||
-      !setting("auto_ring", candidate.autoRing, 1) ||
-      !setting("auto_keys", candidate.autoKeys, 1) ||
-      !setting("auto_dark_raw", candidate.darkRaw, 4095) ||
-      !setting("auto_bright_raw", candidate.brightRaw, 4095)) return false;
+      !setting("keys_brightness", candidate.keys, 100)) return false;
+  for(const char *retired:{"auto_screen","auto_ring","auto_keys","auto_dark_raw","auto_bright_raw"})
+    if(server.hasArg(retired)){error="automatic brightness is no longer supported";return false;}
   if (server.hasArg("led_mode")) {
     const String mode = server.arg("led_mode");
     if (mode != "rainbow" && mode != "static") {
@@ -667,7 +637,7 @@ bool configure(WebServer &server, String &error) {
     candidate.color = rgb;
   }
   if (!LightingSettings::valid(candidate)) {
-    error = "dark and bright calibration readings must differ"; return false;
+    error = "invalid lighting settings"; return false;
   }
   if (memcmp(&candidate, &gLighting, sizeof(candidate)) != 0) {
     if (!saveLighting(candidate)) { error = "could not save lighting settings"; return false; }

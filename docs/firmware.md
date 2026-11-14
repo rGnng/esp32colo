@@ -1,6 +1,6 @@
 # Desktop gadget guide
 
-Current baseline: **0.6.13-plain-labels**. The gadget is configured through the **General**,
+Current baseline: **0.6.19-scene-order**. The gadget is configured through the **General**,
 **Scenes** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
 buttons are 14 px, with larger headings and log text. [API](api.md), [development](development.md), and
@@ -62,20 +62,15 @@ access; WiFi remains the gadget's Internet connection.
 ### Lighting
 
 General LED mode is **Rainbow** or **Static color**. Screen, ring and key LEDs
-have independent 0–100% sliders and independent Auto checkboxes. Initial levels
-are **70%**, with Auto off. Settings survive reboots/OTA. Scene actions can
-change the saved selections or apply temporary effects without replacing them.
+have independent manual 0–100% sliders. Initial levels are **70%**. Settings
+survive reboots/OTA. Scene actions can change saved selections or apply temporary
+effects without replacing them. **Now** reports the effective channel brightness,
+including scene overrides and zero while asleep.
 
-Auto smooths successful light readings and scales each selected level from
-10% of that level in darkness to 100% in bright light. A 70% selection therefore
-ranges from 7% to 70%. A failed read retains the previous sample; after five
-seconds without a good sample, Auto uses selected manual levels. **Now** reports
-the effective channel brightness, including zero while asleep.
-
-Expand **Light sensor and Auto calibration** for raw/mV values, read/error
-counts, browser-session min/max and dark/bright capture. Endpoints default to
-0 and 1200; save distinct values within 0–4095. Either sensor polarity works.
-Readings are not lux, and custom ADC scaling is not factory hardware evidence.
+Ambient-light readings, calibration and automatic dimming have been removed.
+No usable sensor exposed to external light has been established on this unit.
+Previously saved brightness percentages, colors and scenes remain intact;
+old Auto selections are ignored.
 
 ### Sound
 
@@ -84,7 +79,7 @@ Every action in the key-binding editor has its own **Sound** on/off switch,
 saved with the action. This also controls binding-triggered scene cues and
 **Play tone**: turning Sound off silences either. Ordinary actions use a short
 660 Hz, 50 ms cue. Next/Previous use 880/440 Hz for 90 ms, including wraparound;
-direct scene selection follows numeric scene order. Play tone uses its chosen
+direct scene selection follows the displayed scene order. Play tone uses its chosen
 frequency for 200 ms. Unchanged selection and failed scene saves are silent.
 All cues use **General → Sound → Sound effects volume**; 0% is silent.
 
@@ -102,7 +97,7 @@ press or knob turn wakes the gadget, including unbound controls. Changing scenes
 or their configuration also wakes it. Web telemetry polling does not keep it awake.
 
 Sleep turns off the display backlight, ring and button LEDs, preserving the
-saved brightness and Auto selections. WiFi, USB, OTA and input handling remain
+saved brightness selections. WiFi, USB, OTA and input handling remain
 available. **Toggle screen / LEDs** in Device can also wake it. A scene whose
 idle screen is Blank still keeps its display off after waking; its LEDs resume.
 
@@ -126,16 +121,23 @@ for screen, ring and buttons, followed by the key binding table. Each LED group 
 **Save settings** to persist the scene. Colors apply when that scene is active;
 selecting an inactive tab edits its saved configuration. Each brightness channel
 has **Use General** or **Override**. Override enables that scene's saved
-percentage and Auto checkbox; Use General follows the General percentage/Auto
-while remembering the override values. General's Now values show resolved output.
+percentage; Use General follows the General percentage while remembering the
+override values. General's Now values show resolved output.
 Brightness actions adjust the active scene's override when enabled, otherwise
 the General setting; action-driven writes are debounced for 1.5 seconds. Temporary action effects override the
 scene colors and return to them when they expire. Proportional ring feedback
 leaves the button group's scene color in place.
 
+Use the **← / →** buttons beside **+ Scene** to move the selected tab left or
+right. Order saves immediately without activating the selected scene or changing
+its settings. Default can move but cannot be renamed or deleted. Newly created
+scenes always append, including when an earlier deleted ID is reused. Next Scene
+and Previous Scene follow this order and wrap at either end. Direct scene
+bindings continue to target their saved scene IDs.
+
 Existing v1/v2 scenes migrate without changing their names, colors, bindings or
 selection. New brightness overrides start at Use General, icons start at House,
-and existing bindings are not made Global automatically. The version-6 scene
+and existing bindings are not made Global automatically. The version-7 scene
 record is 3304 bytes; older firmware cannot read it, so an application downgrade
 is not a scene-settings rollback.
 
@@ -241,15 +243,26 @@ screens and proportional volume ring feedback use returned MPD state. See the
 [Tab5 integration guide](tab5-integration.md) for setup, mappings and limits.
 Serial companion actions remain deferred.
 
-Each action can keep the current screen or select **Clock**, **Blank**, **Bluetooth volume** or **Bluetooth playback**, and
-can retain lighting or temporarily show rainbow, static color, darkness, or proportional
-ring fill. Proportional fill uses the returned percentage from a brightness or
-speaker action, with partial LED intensity at the boundary. It affects the ring;
-key lighting keeps its general mode. Other temporary LED effects affect both
-groups while respecting independent brightness. Choose an effect color and a
-250–10000 ms duration. Temporary effects expire back to General lighting and
-the scene's idle screen. Later effects in an action list replace earlier
-ones. A scene-switch action ends the remaining list in that gesture.
+Each action can keep the current screen or select **Clock**, **Blank**,
+**Bluetooth volume** or **Bluetooth playback**. Its light feedback applies to
+that binding: an individual button controls its own LED, a combination controls
+all its button LEDs, and a knob action controls the ring. OPEN/REC have no LED.
+
+Choose Keep current light, On (scene lighting), Off, Static color, Rainbow or
+Follow returned value. Set **Light brightness** to Use scene brightness or
+Override with 0–100%, select a color when applicable, and set **Feedback duration**
+(250–10000 ms). Brightness overrides are absolute; 0% is dark. Each affected light
+returns to its scene lighting on expiry. Different buttons and the ring can have
+simultaneous effects with independent durations. Follow returned value uses a
+knob's ring fill or an individual button's LED intensity. Screen effects remain
+independent. Later effects on the same target replace that target's earlier
+cue; a scene-switch action ends the action list.
+
+Connection/version and IP are at the bottom left of the desktop sidebar.
+The page title, active-scene block and device-status block share a compact
+header row. Each status block has two lines; long values have tooltips and
+do not expand the header. On mobile the device-status block moves below the
+title/active scene. The sidebar footer stays hidden in compact navigation.
 
 **Run saved binding** in the row editor executes that saved binding in the active scene.
 It tests configured actions/effects; it does not simulate physical debounce or
@@ -331,6 +344,16 @@ Enter/Space. Escape closes the menu; Tab continues through the form. Menus fit
 above or below the field inside the screen. Modifier multi-selection still
 uses checkboxes and removable tags. Saved values are unchanged.
 
+### Keyboard HID keys
+
+Bluetooth HID key actions have a searchable **Keyboard HID key** dropdown with
+141 named keys: letters, digits, navigation/editing, punctuation, F1–F24,
+numpad, system and international keys. Search by name, decimal/hex usage or
+aliases such as PgUp and star. Names show their HID usage in parentheses.
+**Custom HID code** accepts 1–231 for unlisted keys and automatically displays
+an existing uncommon code. Keyboard modifiers remain separate and are retained
+when choosing another key. Selection does not change which keys the host accepts.
+
 ### Keyboard modifiers
 
 Bluetooth HID key actions use a multi-select dropdown for **Keyboard modifiers**.
@@ -349,8 +372,12 @@ match only an Any order binding. Hold the modifier and tap another member to
 repeat without releasing it. Reversed pairs can be configured independently.
 
 **Ring display** is a scene setting beside the screen/color choices. Select
-Bluetooth playback progress for a clockwise fill using track elapsed/duration;
-action light effects take priority temporarily. Pause holds the fill, Stop and
+Bluetooth playback progress to fill using track elapsed/duration. **Ring fill
+style** chooses **Clockwise** (the existing default) or **Bottom to top
+(symmetric)**. The latter starts at the bottom, fills both sides equally and
+reaches the top at 100%, with partial LED brightness between steps. This style
+also applies to knob percentage feedback, including Bluetooth volume.
+It is saved per scene. Action light effects take priority temporarily. Pause holds the fill, Stop and
 unavailable data clear it. This does not change the button LEDs or brightness.
 The Bluetooth playback screen has a compact playback-state icon at the top and centered
 16 px title/artist lines, with no emoji/boxes. Japanese metadata is supported by

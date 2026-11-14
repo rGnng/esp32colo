@@ -85,3 +85,8 @@ Custom firmware has separately exercised audio output, ADC changes, TE pulses
 and USB networking. Those observations are kept in the
 [development baseline](development.md#verified-baseline-and-open-items) and
 are not promoted into factory-code findings.
+
+The custom firmware no longer assigns GPIO16 a light-sensor role or samples
+it for automatic brightness. Earlier ADC readings did not establish a usable
+ambient sensor exposed outside the case; sampling and that feature were removed
+in 0.6.17. This does not add a factory-derived GPIO assignment.

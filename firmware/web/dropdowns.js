@@ -65,7 +65,7 @@ window.Dropdowns=(()=>{
       }
       function filter(){
         const query=p.search?.value.trim().toLocaleLowerCase()||'';
-        p.rows.forEach(row=>row.button.hidden=!!query&&!row.option.label.toLocaleLowerCase().includes(query));
+        p.rows.forEach(row=>{const text=(row.option.label+' '+(row.option.dataset.search||'')).toLocaleLowerCase();row.button.hidden=!!query&&!query.split(/\s+/).every(word=>text.includes(word))});
         p.groups.forEach(group=>group.heading.hidden=!group.rows.some(row=>!row.button.hidden));
         p.empty.hidden=p.rows.some(row=>!row.button.hidden);position();
       }

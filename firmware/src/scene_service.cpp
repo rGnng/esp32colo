@@ -5,6 +5,7 @@
 #include "scene_icons.h"
 #include "scene_cue.h"
 #include "action_sound.h"
+#include "scene_order.h"
 #include "general_service.h"
 #include "audio_demo.h"
 #include "bluetooth_service.h"
@@ -13,6 +14,8 @@ namespace SceneService {
 namespace {
 using namespace SceneSettings;
 Stored gSettings, gCandidate;
+SceneOrder::Stored gOrder;
+bool gOrderStored=false;
 Preferences gPrefs;
 bool gOpen=false, gStored=false,gLevelDirty=false;
 uint32_t gLevelChangedAt=0,gRevision=1;
@@ -31,15 +34,19 @@ String quote(const char *value) {
   return out+'"';
 }
 String color(uint32_t rgb) { char value[8]; snprintf(value,sizeof(value),"#%06lx",static_cast<unsigned long>(rgb)); return quote(value); }
+String lightFeedback(const ActionFeedback::Light &light){
+  return "{\"active\":"+String(light.led!=kInherit?"true":"false")+",\"led\":"+quote(kLeds[light.led])+
+    ",\"brightness\":"+String(light.brightness)+",\"color\":"+color(light.color)+",\"percent\":"+String(light.percent)+
+    ",\"remote\":"+String(light.remote?"true":"false")+",\"remaining_ms\":"+String(light.remainingMs)+"}";
+}
 String sceneLighting(const Scene &scene) {
   String out=",\"ring_mode\":"+quote(kLightingModes[scene.ring.mode])+",\"ring_color\":"+color(scene.ring.color)+
-    ",\"keys_mode\":"+quote(kLightingModes[scene.keys.mode])+",\"keys_color\":"+color(scene.keys.color)+",\"icon\":"+quote(SceneIcons::kNames[scene.icon])+",\"ring_display\":"+quote(kRingDisplays[scene.ringDisplay]);
+    ",\"keys_mode\":"+quote(kLightingModes[scene.keys.mode])+",\"keys_color\":"+color(scene.keys.color)+",\"icon\":"+quote(SceneIcons::kNames[scene.icon])+",\"ring_display\":"+quote(kRingDisplays[scene.ringDisplay])+",\"ring_style\":"+quote(RingFill::kStyles[scene.ringStyle]);
   const char *names[]={"screen","ring","keys"};
   for(int i=0;i<3;++i) {
     const String channel=names[i];const auto &level=scene.levels[i];
     out+=",\""+channel+"_brightness_mode\":"+quote(level.overrideGeneral?"override":"general");
     out+=",\""+channel+"_brightness\":"+String(level.percent);
-    out+=",\"auto_"+channel+"\":"+String(level.automatic?"true":"false");
   }
   return out;
 }
@@ -90,6 +97,12 @@ bool readColor(const String &value,uint32_t &out) {
   }
   out=rgb; return true;
 }
+bool saveOrder(const SceneOrder::Stored &order,String &error){
+  if(!SceneOrder::valid(order)){error="invalid scene order";return false;}
+  if((!gOrderStored||std::memcmp(&gOrder,&order,sizeof(order)))&&
+     (!gOpen||gPrefs.putBytes("order",&order,sizeof(order))!=sizeof(order))){error="could not save scene order to NVS";return false;}
+  gOrderStored=true;return true;
+}
 bool commit(String &error,int direction=0,bool sceneSound=true) {
   if (!valid(gCandidate)) { error="invalid scene, action or effect configuration"; return false; }
   if (!std::memcmp(&gSettings,&gCandidate,sizeof(gSettings))&&!gLevelDirty) return true;
@@ -97,9 +110,11 @@ bool commit(String &error,int direction=0,bool sceneSound=true) {
     error="could not save scenes to NVS"; return false;
   }
   const int previous=gSettings.active;
+  const int previousPosition=SceneOrder::position(gOrder,gSettings,previous);
   BluetoothService::cancel();
   gSettings=gCandidate; gStored=true;gLevelDirty=false;++gRevision; ++gEpoch; gFeedback.clear();
-  const unsigned cue=SceneCue::frequency(sceneSound&&GeneralService::sceneChangeSound(),previous,gSettings.active,direction);
+  const unsigned cue=SceneCue::frequency(previous!=gSettings.active&&sceneSound&&GeneralService::sceneChangeSound(),
+    previousPosition,SceneOrder::position(gOrder,gSettings,gSettings.active),direction);
   if(cue)AudioDemo::beep(cue,SceneCue::kDurationMs);
   return true;
 }
@@ -115,11 +130,15 @@ String list(const char *const *names,int count) {
 
 void begin(Handler handler) {
   gHandler=handler; gOpen=gPrefs.begin("scenes",false);
+  SceneOrder::Stored order;
+  if(gOpen&&gPrefs.getBytesLength("order")==sizeof(order)&&gPrefs.getBytes("order",&order,sizeof(order))==sizeof(order)&&SceneOrder::valid(order)){
+    gOrder=order;gOrderStored=true;
+  }
   const size_t bytes=gOpen?gPrefs.getBytesLength("settings"):0;
   if(bytes==sizeof(gSettings)&&gPrefs.getBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings)){
     if(valid(gSettings)){gStored=true;return;}
     const bool sound=GeneralService::sceneChangeSound();
-    if(migrateV5(gSettings,sound)||migrateV4(gSettings,sound)||migrateV3(gSettings,sound)){gStored=gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);if(!gStored)gError="could not persist migrated scenes";return;}
+    if(migrateV6(gSettings)||migrateV5(gSettings,sound)||migrateV4(gSettings,sound)||migrateV3(gSettings,sound)){gStored=gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);if(!gStored)gError="could not persist migrated scenes";return;}
   }
   // The two legacy layouts share one scratch area, avoiding permanent duplication.
   union Legacy { StoredV1 v1;StoredV2 v2;Legacy():v2(){} };
@@ -171,6 +190,7 @@ SceneSettings::Light lighting(bool ring) {
   return ring?scene.ring:scene.keys;
 }
 uint8_t ringDisplay(){return gSettings.scenes[gSettings.active].ringDisplay;}
+uint8_t ringStyle(){return gSettings.scenes[gSettings.active].ringStyle;}
 uint8_t screen() {
   const auto f=feedback();
   return f.active&&f.screen!=SceneSettings::kUnchanged?f.screen:gSettings.scenes[gSettings.active].screen;
@@ -180,14 +200,20 @@ String statusJson() {
   String out="{\"active\":"+String(gSettings.active)+",\"name\":"+quote(gSettings.scenes[gSettings.active].name);
   out+=",\"standby_screen\":"+quote(kScreens[gSettings.scenes[gSettings.active].screen])+",\"screen\":"+quote(kScreens[screen()])+",\"stored\":"+String(gStored?"true":"false");
   out+=sceneLighting(gSettings.scenes[gSettings.active]);
+  out+=",\"order_stored\":"+String(gOrderStored?"true":"false");
   out+=",\"revision\":"+String(gRevision);
   out+=",\"epoch\":"+String(gEpoch)+",\"last_event\":{\"sequence\":"+String(gSequence)+",\"at_ms\":"+String(gAt);
   out+=",\"input\":"+(gInput<0?String("null"):quote(inputName(gInput).c_str()));
   out+=",\"gesture\":"+(gGesture<0?String("null"):quote(kGestures[gGesture]));
   out+=",\"source_scene\":"+(gSource<0?String("null"):String(gSource))+",\"global\":"+String(gWasGlobal?"true":"false");
   out+=",\"action\":"+quote(kTypes[gLastType])+",\"percent\":"+String(gPercent)+"}";
-  out+=",\"feedback\":{\"active\":"+String(f.active?"true":"false")+",\"led\":"+quote(kLeds[f.led]);
-  out+=",\"percent\":"+String(f.percent)+",\"color\":"+color(f.color)+"},\"error\":"+quote(gError.c_str())+"}";
+  // Preserve the scalar summary for older clients; explicit channels are authoritative.
+  const ActionFeedback::Light *summary=&f.ring;
+  for(const auto &key:f.keys)if(summary->led==kInherit&&key.led!=kInherit)summary=&key;
+  out+=",\"feedback\":{\"active\":"+String(f.active?"true":"false")+",\"led\":"+quote(kLeds[summary->led]);
+  out+=",\"percent\":"+String(summary->percent)+",\"color\":"+color(summary->color)+",\"ring\":"+lightFeedback(f.ring)+",\"keys\":[";
+  for(int i=0;i<4;++i){if(i)out+=',';out+=lightFeedback(f.keys[i]);}
+  out+="]},\"error\":"+quote(gError.c_str())+"}";
   return out;
 }
 String configJson() {
@@ -199,8 +225,9 @@ String configJson() {
   for(int i=0;i<SceneIcons::kCount;++i){if(i)out+=',';out+="{\"id\":"+quote(SceneIcons::kNames[i])+",\"label\":"+quote(SceneIcons::kLabels[i])+"}";}
   out+="]},\"scenes\":[";
   bool first=true;
-  for (int i=0;i<kSceneCount;++i) {
-    if (!exists(gSettings,i)) continue;
+  uint8_t ordered[kSceneCount];const int sceneCount=SceneOrder::list(gOrder,gSettings,ordered);
+  for (int n=0;n<sceneCount;++n) {
+    const int i=ordered[n];
     if (!first) out+=','; first=false;
     out+="{\"id\":"+String(i)+",\"name\":"+quote(gSettings.scenes[i].name)+",\"protected\":"+String(i==0?"true":"false")+",\"standby_screen\":"+quote(kScreens[gSettings.scenes[i].screen])+sceneLighting(gSettings.scenes[i])+",\"bindings\":[";
     bool firstBinding=true;
@@ -211,7 +238,7 @@ String configJson() {
       for (int n=0;n<b.count;++n) {
         if (n) out+=','; const auto &a=b.actions[n];
         out+="{\"type\":"+quote(kTypes[a.type])+",\"value\":"+String(a.value)+",\"target\":"+String(a.target);
-        out+=",\"led\":"+quote(kLeds[a.ledEffect()])+",\"sound\":"+String(a.soundEnabled()?"true":"false")+",\"screen\":"+quote(kScreens[a.screen])+",\"color\":"+color(a.color)+",\"feedback_ms\":"+String(a.feedbackMs)+"}";
+        out+=",\"led\":"+quote(kLeds[a.ledEffect()])+",\"led_brightness\":"+String(a.ledBrightness())+",\"sound\":"+String(a.soundEnabled()?"true":"false")+",\"screen\":"+quote(kScreens[a.screen])+",\"color\":"+color(a.colorRgb())+",\"feedback_ms\":"+String(a.feedbackMs)+"}";
       }
       out+="]}";
     }
@@ -226,9 +253,20 @@ bool configure(WebServer &server,String &error) {
   if (op=="create") {
     id=-1; for (int i=1;i<kSceneCount;++i) if (!exists(gCandidate,i)) { id=i; break; }
     if (id<0) { error="scene capacity reached (8 scenes)"; return false; }
-    gCandidate.scenes[id].used=1;
+    gCandidate.scenes[id]=Scene{};gCandidate.scenes[id].used=1;
   } else if (!number(server,"scene_id",0,kSceneCount-1,id,error,true)||!exists(gCandidate,id)) {
     if (error.isEmpty()) error="scene not found"; return false;
+  }
+  if(op=="reorder"){
+    int position=0;SceneOrder::Stored order=gOrder;
+    if(!number(server,"position",0,kSceneCount-1,position,error,true)||!SceneOrder::move(order,gSettings,id,position)){
+      if(error.isEmpty())error="invalid scene position";return false;
+    }
+    if(!saveOrder(order,error))return false;
+    if(std::memcmp(&gOrder,&order,sizeof(order))){
+      gOrder=order;++gRevision;++gEpoch;gFeedback.clear();BluetoothService::cancel();
+    }
+    return true;
   }
   if (op=="create"||op=="update") {
     String name=server.arg("name"); name.trim();
@@ -244,6 +282,7 @@ bool configure(WebServer &server,String &error) {
       gCandidate.scenes[id].screen=screen;
     }
     if(server.hasArg("ring_display")){const int mode=index(server.arg("ring_display"),kRingDisplays,kRingDisplayCount);if(mode<0){error="unknown ring display";return false;}gCandidate.scenes[id].ringDisplay=mode;}
+    if(server.hasArg("ring_style")){const int style=index(server.arg("ring_style"),RingFill::kStyles,RingFill::kStyleCount);if(style<0){error="unknown ring fill style";return false;}gCandidate.scenes[id].ringStyle=style;}
     if(server.hasArg("icon")) {
       const int icon=index(server.arg("icon"),SceneIcons::kNames,SceneIcons::kCount);
       if(icon<0){error="unknown scene icon";return false;}gCandidate.scenes[id].icon=icon;
@@ -256,9 +295,10 @@ bool configure(WebServer &server,String &error) {
         if(mode!="general"&&mode!="override"){error="brightness mode must be general or override";return false;}
         level.overrideGeneral=mode=="override";
       }
-      int percent=level.percent,automatic=level.automatic;
-      if(!number(server,(name+"_brightness").c_str(),0,100,percent,error)||!number(server,("auto_"+name).c_str(),0,1,automatic,error))return false;
-      level.percent=percent;level.automatic=automatic;
+      if(server.hasArg("auto_"+name)){error="automatic brightness is no longer supported";return false;}
+      int percent=level.percent;
+      if(!number(server,(name+"_brightness").c_str(),0,100,percent,error))return false;
+      level.percent=percent;
     }
     for (int channel=0;channel<2;++channel) {
       auto &light=channel==0?gCandidate.scenes[id].ring:gCandidate.scenes[id].keys;
@@ -297,14 +337,17 @@ bool configure(WebServer &server,String &error) {
       if (server.hasArg(prefix+"screen")) screen=index(server.arg(prefix+"screen"),kScreens,kScreenCount);
       if (type<0||led<0||screen<0) { error="invalid action or effect"; return false; }
       a.type=type; a.led=led; a.screen=screen;
-      int value=0,target=0,duration=1500,sound=0;
+      int value=0,target=0,duration=1500,sound=0,brightness=-1;
       if (!number(server,(prefix+"value").c_str(),-100,4000,value,error)||
           !number(server,(prefix+"target").c_str(),0,type==kBluetoothKey?255:kSceneCount-1,target,error)||
           !number(server,(prefix+"feedback_ms").c_str(),250,10000,duration,error)||
-          !number(server,(prefix+"sound").c_str(),0,1,sound,error)) return false;
+          !number(server,(prefix+"sound").c_str(),0,1,sound,error)||
+          !number(server,(prefix+"led_brightness").c_str(),-1,100,brightness,error)) return false;
       a.value=value; a.target=target; a.feedbackMs=duration;
-      a.setSound(sound);
-      if (server.hasArg(prefix+"color")&&!readColor(server.arg(prefix+"color"),a.color)) { error="color must be #RRGGBB"; return false; }
+      a.setSound(sound);a.setLedBrightness(brightness);
+      uint32_t rgb=a.colorRgb();
+      if (server.hasArg(prefix+"color")&&!readColor(server.arg(prefix+"color"),rgb)) { error="color must be #RRGGBB"; return false; }
+      a.setColorRgb(rgb);
       if (!validAction(gCandidate,a)) { error="invalid action value, scene target or proportional effect"; return false; }
     }
     int sourceInput=-1,sourceGesture=-1,createOnly=0;
@@ -323,6 +366,12 @@ bool configure(WebServer &server,String &error) {
         "binding capacity reached (64 configured gestures)"; return false;
     }
   } else { error="unknown scene operation"; return false; }
+  if(op=="create"){
+    if(!valid(gCandidate)){error="invalid scene, action or effect configuration";return false;}
+    SceneOrder::Stored order=gOrder;SceneOrder::append(order,id);
+    if(!saveOrder(order,error))return false;
+    gOrder=order;
+  }
   return commit(error);
 }
 void event(int input,int gesture,int repetitions) {
@@ -335,17 +384,16 @@ void event(int input,int gesture,int repetitions) {
   for (int i=0;i<b.count;++i) {
     const Action a=b.actions[i]; gLastType=a.type;
     const int previousScene=gSettings.active;
+    const int previousPosition=SceneOrder::position(gOrder,gSettings,previousScene);
     if (a.type==kSwitchScene) activate(a.target,0,false);
     else if (a.type==kNextScene||a.type==kPreviousScene) {
       const int direction=a.type==kNextScene?1:-1;
-      for (int n=1;n<=kSceneCount;++n) {
-        const int id=(int(gSettings.active)+direction*n+kSceneCount)%kSceneCount;
-        if (exists(gSettings,id)) { activate(id,direction,false); break; }
-      }
+      const int id=SceneOrder::neighbor(gOrder,gSettings,gSettings.active,direction);
+      if(id>=0)activate(id,direction,false);
     } else if (gHandler) gPercent=gHandler(a,repetitions);
-    const unsigned cue=gError.isEmpty()?ActionSound::frequency(a,previousScene,gSettings.active):0;
+    const unsigned cue=gError.isEmpty()?ActionSound::frequency(a,previousPosition,SceneOrder::position(gOrder,gSettings,gSettings.active)):0;
     if(cue)AudioDemo::beep(cue,ActionSound::duration(a));
-    gFeedback.apply(a,gPercent,millis());
+    gFeedback.apply(a,gPercent,millis(),input);
     if (a.type==kSwitchScene||a.type==kNextScene||a.type==kPreviousScene||gEpoch!=previousEpoch||!gError.isEmpty()) break;
   }
 }

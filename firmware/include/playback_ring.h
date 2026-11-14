@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include "ring_fill.h"
 namespace PlaybackRing {
 // Consume the shared display clock; never restart interpolation per packet.
 inline int progress(bool available,int playback,uint32_t position,uint32_t duration){
@@ -8,8 +9,5 @@ inline int progress(bool available,int playback,uint32_t position,uint32_t durat
   if(position>duration)position=duration;
   return uint64_t(position)*1000/duration;
 }
-inline int coverage(int progress,int pixel,int count){
-  const int value=progress*count-pixel*1000;
-  return value<0?0:value>1000?1000:value;
-}
+using RingFill::coverage;
 }

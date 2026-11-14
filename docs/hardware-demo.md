@@ -2,7 +2,7 @@
 
 Hardware bring-up is complete. Current behavior is consolidated in the
 [firmware guide](firmware.md), including the plain clock, lighting controls,
-ambient-light calibration, physical controls and USB networking.
+manual brightness, physical controls and USB networking.
 
 - [Build, backup, OTA and recovery](flash.md)
 - [HTTP API](api.md)

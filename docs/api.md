@@ -67,25 +67,23 @@ curl http://coloplay.local/api/status
 | `scene` | Active scene, standby/current screen, NVS state, last event/action/result and temporary feedback |
 | `usb` | Configured/active mode, stages, link, counters, DHCP and lease state |
 | `hardware` | Startup stage, page/tour, awake/paused state, `idle_ms` since the last inactivity reset and peripheral objects |
-| `hardware.display` | Framebuffer, frame/FPS/TE counters, selected/automatic/effective screen brightness |
+| `hardware.display` | Framebuffer, frame/FPS/TE counters, selected/effective screen brightness |
 | `hardware.encoder` | Raw edges, decoded position, pin levels and `edges_per_detent=2` |
-| `hardware.leds` | Ring/key brightness and Auto flags, effective levels, mode/color and SPI transfer errors/counters |
-| `hardware.lighting` | NVS `stored`, `auto_dark_raw`, `auto_bright_raw`, `sensor_usable` |
-| `hardware.sensors` | `vdd_raw`, approximate `vdd_mv_approx`, `light_raw`, `light_mv`, light result/counts and charge logic |
+| `hardware.leds` | Ring/key brightness, effective levels, mode/color and SPI transfer errors/counters |
+| `hardware.lighting` | NVS `stored` |
+| `hardware.sensors` | `vdd_raw`, approximate `vdd_mv_approx` and charge logic |
 | `hardware.psram` | Pattern-test result/size and free PSRAM |
 | `hardware.audio` | Codec/I2S readiness, volume, microphone levels, frame/error counters and tone state |
 
-Screen fields are `brightness`, `auto_brightness`, `effective_brightness`.
-LED fields are `ring_brightness`, `keys_brightness`, `auto_ring`, `auto_keys`,
+Screen fields are `brightness` and `effective_brightness`.
+LED fields are `ring_brightness`, `keys_brightness`,
 `ring_effective`, `keys_effective`, `mode`, `color`. These brightness values are
 percentages except the legacy `hardware.leds.brightness`, which reports the
 ring's selected 0–255 byte level.
 
-A failed light sample retains the last good raw/mV values. Check `light_error`,
-`light_readings` and `light_errors` rather than interpreting a retained value as
-a fresh measurement. Before a successful read, `light_raw` is -1 and the read
-count is zero. `sensor_usable` is the Auto controller's availability flag: the
-last good sample is retained for up to five seconds. Values are not lux.
+Ambient-light and automatic-brightness telemetry have been removed. No
+`light_*`, `auto_brightness`, `auto_ring`, `auto_keys`, calibration or
+`sensor_usable` fields are published. Supply/charge telemetry remains.
 `vdd_mv_approx` is the divided supply rail estimate, not battery state of charge.
 
 Screen capture is disabled in 0.4.3: `/api/screenshot.bmp` returns 404 and the
@@ -126,7 +124,7 @@ gesture/action/effect `catalog`, and `scenes`. Each scene has a stable numeric
 `id`, `name`, `protected`, `standby_screen`, `ring_mode`, `ring_color`,
 `keys_mode`, `keys_color`, and sparse `bindings` list. Each
 binding contains `input`, `gesture`, `global` and an ordered `actions` array. NVS stores
-one version-6, 3304-byte record: 8 scenes, 64 configured gestures and up to 3
+one version-7, 3304-byte record: 8 scenes, 64 configured gestures and up to 3
 actions per gesture. The active scene is persistent.
 
 Ring and key LED modes independently accept `general`, `rainbow` or `static`;
@@ -139,7 +137,7 @@ lighting fields retain their saved values, including during rename requests.
 screen effects. Blank switches off only the display and reports effective
 screen brightness 0; inactivity sleep sets `hardware.awake=false` and all three
 effective brightness channels to 0. Neither changes saved percentages.
-Brightness/Auto can inherit General or be overridden per scene; action LED
+Brightness can inherit General or be overridden per scene; action LED
 feedback overlays scene lighting, then expires back to it. Legacy v1 scenes migrate with both groups in
 `general`, retaining all names, IDs, bindings and the active selection.
 
@@ -150,9 +148,20 @@ feedback overlays scene lighting, then expires back to it. Legacy v1 scenes migr
 | `create` | `name` | Create an empty scene in a free slot |
 | `update` | `scene_id`, `name`, optional screen/color, `icon` and brightness fields below | Save scene settings atomically |
 | `delete` | `scene_id` | Delete; active/scene-switch targets fall back to Default |
+| `reorder` | `scene_id`, `position` (zero-based) | Move an existing scene in the saved display/navigation order |
 | `activate` | `scene_id` | Persist active selection and clear pending input/effects |
 | `binding` | `scene_id`, `input`, `gesture`, `count`, optional `global=0/1`, action fields below | Atomically replace the complete ordered binding; count 0 clears |
 | `run` | `scene_id`, `input`, `gesture` | Execute the saved binding in the active scene; requires hardware ready |
+
+The `scenes` array is returned in saved order. Reorder accepts positions
+0 through scene-count minus one, preserves scene IDs/settings/bindings/active
+selection and saves before applying. Default can be reordered. New scenes append
+regardless of their numeric ID; deletion removes only the deleted scene from the
+visible sequence. Next/Previous actions use this sequence with wraparound,
+while explicit scene targets remain IDs. Invalid/missing positions return 400.
+`state.order_stored` reports whether the separate 12-byte `scenes/order` NVS
+record is saved. A missing/invalid record uses ascending scene IDs, preserving
+the legacy order without changing the 3304-byte scene settings layout.
 
 Scene 0 is protected: it must exist, remains named **Default**, and cannot be
 deleted. Names are distinct, nonempty, at most 24 UTF-8 bytes, with no control
@@ -163,7 +172,7 @@ saving. Invalid requests or NVS write failures do not apply a partial update.
 
 Additional scene fields are `icon` (one of `catalog.icons[].id`) and, for each
 `screen`, `ring`, `keys` channel: `<channel>_brightness_mode=general|override`,
-`<channel>_brightness` (0–100), `auto_<channel>` (form 0/1; JSON boolean).
+`<channel>_brightness` (0–100).
 Omitted fields are retained. Icon names are fixed to the 32 locally bundled
 Bootstrap choices. Brightness actions update the enabled scene override or the
 General setting; override actions debounce storage for 1.5 seconds. `state.revision`
@@ -198,25 +207,51 @@ Inputs are `key1`, `key2`, `key3`, `key4`, `knob`, `open`, `rec`. All support
 binding, not the physical recognizer; see [gesture semantics](firmware.md#gestures).
 
 For each action index 0–2 send `a0_type`, `a0_value`, `a0_target`, `a0_led`,
-`a0_screen`, `a0_color`, `a0_feedback_ms`, `a0_sound` (then `a1_…`, `a2_…` as needed):
+`a0_screen`, `a0_color`, `a0_feedback_ms`, `a0_sound`, `a0_led_brightness` (then `a1_…`, `a2_…` as needed):
 
 | Field | Values |
 |---|---|
 | `type` | `none`, `next_scene`, `previous_scene`, `switch_scene`, `screen_change`, `screen_set`, `ring_change`, `ring_set`, `keys_change`, `keys_set`, `volume_change`, `volume_set`, `rainbow`, `static`, `toggle_awake`, `sync_time`, `tone`, `bluetooth_volume`, `bluetooth_media`, `bluetooth_key` |
 | `value` | Adjustments -100…100 per step; setters 0…100%; tone 100…4000 Hz |
 | `target` | Existing scene ID for `switch_scene` |
-| `led` | `inherit`, `proportional`, `rainbow`, `static`, `off` |
+| `led` | `inherit`, `on`, `off`, `static`, `rainbow`, `proportional` |
+| `led_brightness` | -1 (use resolved scene brightness, default) or 0–100 (absolute override) |
 | `sound` | `0` (off, default) or `1` (on); JSON returns a boolean |
 | `screen` | `unchanged`, `clock`, `blank`, `bluetooth_volume`, `bluetooth_playback` |
 | `color` | `#RRGGBB`; initial effect color `#40ffaa` |
 | `feedback_ms` | 250…10000; default 1500 |
 
+Action light feedback targets its binding input: Key 1–4 affect only that key,
+combinations affect all participating keys, and all knob gestures affect only
+the ring. OPEN/REC have no corresponding LED. Each key and the ring keep their
+own overlay/deadline. The configured RGB, brightness and `feedback_ms` apply to
+those targets; expiration restores their resolved scene lighting. `on` uses
+scene color/animation with the chosen brightness, `off` temporarily darkens the
+target, and `inherit` leaves an existing effect/deadline untouched. Brightness
+0 is dark; -1 follows scene/General overrides. Sleep still turns outputs off.
+
 Proportional feedback is valid for percentage-producing brightness/speaker
-actions and Bluetooth volume. It fills the ring from their returned percentage; key LEDs keep General
-lighting. Other LED effects affect both groups at their configured brightness.
-Temporary effects expire back to General lighting and the scene's standby
-screen. Screen overrides route through the scene service; Clock, Blank and both Bluetooth screens are
-implemented. Scene switching ends the gesture's action list.
+actions and Bluetooth volume. A knob fills its ring; a button scales only its
+own LED intensity using the returned percentage. Independent screen overrides
+route through the scene service and keep their own deadline. Scene switching
+ends the gesture's action list. Explicit device lighting commands still change
+the saved group settings; this input targeting applies to the `led` feedback field.
+
+`status.scene.feedback.ring` and `keys[0..3]` expose active mode, RGB,
+brightness, initial percentage, remote source and remaining milliseconds.
+Legacy scalar feedback fields summarize the ring or first active key.
+`hardware.leds.key_colors` and `ring_colors` report the last composed output RGB
+in logical key/ring order, after gamma/brightness and sleep. SPI error counters
+remain separate. A visual device check confirmed Key 1–4 map to slots 9–12
+in that order. A later single-pixel check located ring slot 0 at 12 o’clock;
+symmetric fill uses that confirmed top position.
+
+Scene schema 6 migrates to 7 with inherited action brightness, preserving other
+saved values and the 3304-byte record. Older versions migrate through the same
+brightness defaults. RGB remains `#RRGGBB` on the API; its stored high byte holds
+brightness, independently of the existing sound bit. Use a schema-7-capable
+recovery image to retain scenes.
+
 Each enabled action produces a nonblocking local cue: ordinary actions use 660 Hz
 for 50 ms, scene changes retain the 880/440 Hz next/previous cue for 90 ms, and
 `tone` uses its configured frequency for 200 ms. Sound off also silences `tone`
@@ -233,6 +268,7 @@ Desktop Serial integration is deferred; Bluetooth Tab5 integration is implemente
 curl -X POST http://coloplay.local/api/scenes -d 'op=create&name=Work'
 # Substitute the returned scene ID:
 curl -X POST http://coloplay.local/api/scenes -d 'op=activate&scene_id=1'
+curl -X POST http://coloplay.local/api/scenes -d 'op=reorder&scene_id=1&position=0'
 curl -X POST http://coloplay.local/api/scenes \
   -d 'op=binding&scene_id=1&input=knob&gesture=right&count=1' \
   -d 'a0_type=volume_change&a0_value=2&a0_led=proportional&a0_screen=clock' \
@@ -261,16 +297,20 @@ persistent lighting settings must be saved successfully first.
 | `brightness` | Integer 0–100 | Saved screen selection; initial 70 |
 | `ring_brightness` | Integer 0–100 | Saved ring selection; initial 70 |
 | `keys_brightness` | Integer 0–100 | Saved key LED selection; initial 70 |
-| `auto_screen`, `auto_ring`, `auto_keys` | 0 or 1 each | Independent saved Auto flags; initially 0 |
 | `led_mode` | `rainbow` or `static` | Saved; initial `rainbow` |
 | `led_color` | `#RRGGBB`, six hexadecimal digits | Saved; initial `#ffffff`; used in static mode |
-| `auto_dark_raw`, `auto_bright_raw` | Integers 0–4095, distinct | Saved together with lighting; initial 0 / 1200; either polarity |
 | `volume` | Integer 0–100 | Runtime speaker amplitude; initial 75; 0 mutes, 100 is 0 dB gain |
 | `tone` | Integer 100–4000 Hz | Play a tone; omitted means no tone |
 | `duration` | Integer 30–1500 ms | Tone duration; default 250 for this request |
 | `awake` | 0 or 1 | Runtime screen/LED sleep; web/OTA remain available |
 | `led_test` | 0 stop, 1 white, 2 red, 3 green, 4 blue | Temporary five-second test, then configured mode; brightness selections are unchanged |
 | `leds` | Legacy integer 0–64 | Saved compatibility command; sets both ring and keys using the old byte scale |
+
+The retired `auto_screen`, `auto_ring`, `auto_keys`, `auto_dark_raw` and
+`auto_bright_raw` parameters return HTTP 400 before any lighting changes.
+Scene create/update likewise reject the three retired `auto_<channel>` flags.
+Old on-flash fields are reserved/ignored; lighting stays version 1 / 44 bytes,
+scene version 7 / 3304 bytes, preserving manual levels and all other settings.
 
 Legacy `leds` values are converted by `(value * 100 + 127) / 255` using integer
 arithmetic; `leds=64` is approximately 25%, not 100%. Prefer the independent
@@ -280,11 +320,9 @@ which can be static or rainbow. Frame slot 13 stays off in all current modes.
 
 ```bash
 curl -X POST http://coloplay.local/api/lighting \
-  -d 'brightness=70&ring_brightness=70&keys_brightness=70&auto_screen=0&auto_ring=0&auto_keys=0'
+  -d 'brightness=70&ring_brightness=70&keys_brightness=70'
 curl -X POST http://coloplay.local/api/lighting \
   -d led_mode=static --data-urlencode 'led_color=#ff8040'
-curl -X POST http://coloplay.local/api/lighting \
-  -d 'auto_screen=1&auto_dark_raw=0&auto_bright_raw=1200'
 curl -X POST http://coloplay.local/api/lighting -d 'page=4&auto=0'
 ```
 
@@ -417,6 +455,10 @@ Bluetooth binding parameters:
 | `bluetooth_media` | Consumer usage: Play 176, Pause 177, Fast Forward 179, Rewind 180, Next 181, Previous 182, Stop 183, Play/Pause 205, Mute 226 | 0 pulse/tap, 1 start seeking, 2 stop seeking; nonzero only for Forward/Rewind |
 | `bluetooth_key` | Keyboard usage 1–231 | Modifier mask 0–255 |
 
+The keyboard editor offers a searchable named-key dropdown and a Custom HID
+code input for unlisted usages. Saved `value` stays the numeric keyboard usage;
+key names, search aliases and the custom-input UI mode add no API/NVS fields.
+
 The web editor presents the modifier mask as a multi-select dropdown with
 removable tags. The API still uses the numeric `aN_target` mask: left Control,
 Shift, Alt and GUI are 1/2/4/8; right variants are 16/32/64/128. Combine bits
@@ -444,7 +486,13 @@ ordered string as identity. Wrong-order or simultaneous presses cannot trigger
 an ordered binding; an exact ordered group takes priority over Any order.
 
 Scene `update` accepts `ring_display=lighting|bluetooth_progress` and includes it
-in scene/state JSON. Bluetooth progress uses fresh playback elapsed/duration,
+in scene/state JSON. Scene `create`/`update` also accept
+`ring_style=clockwise|bottom_to_top` and return it in scene/state JSON. The
+default is `clockwise`. `bottom_to_top` fills symmetric LED pairs from bottom
+to top and applies to both playback progress and knob proportional effects
+(including Bluetooth volume); it leaves button effects unchanged. Style uses
+one formerly reserved scene byte, preserving schema 7 and its 3304-byte layout.
+Bluetooth progress uses fresh playback elapsed/duration,
 with paused/stopped/unavailable handling and action-effect priority. Diagnostic
 `hardware.leds.progress_permille` reports 0–1000 or -1 when unavailable.
 
