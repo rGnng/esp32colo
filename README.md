@@ -13,9 +13,10 @@ development. The build target and default hostname remain `coloplay`.
 
 ## Current baseline
 
-Source version: **`0.5.4-idle-sleep`**. Documentation consolidated on **2026-11-13**.
-Per-scene lighting was OTA-verified on this unit, including legacy scene
-migration, independent mode/color saves and preserved General settings.
+Current firmware: **`0.6.4-smooth-progress`**, built on `06b4e8c` with the Bluetooth
+integration. Tab5 changes build on **`a34fa8a`** and reuse its MPD volume logic.
+Both devices are updated by application-only OTA. Validation details and image
+fingerprints are in the [release record](docs/development.md#current-verified-release).
 The working firmware provides:
 
 - A plain Inter clock showing hours and minutes, with a colon only after NTP sync.
@@ -25,6 +26,7 @@ The working firmware provides:
 - Ambient-light readings, calibration and automatic dimming; persistent settings.
 - Compact Bootstrap dark configuration: General, Scenes and Device pages,
   served locally over WiFi or USB CDC-ECM, plus selectable USB serial/JTAG.
+  Includes SSID/status/RSSI/IP, an SSID/password editor and a web log viewer.
 - Application-only HTTP OTA and ArduinoOTA through the preserved factory bootloader.
 - Persistent scenes with customizable button/knob gestures, simultaneous button
   combinations, Global Default bindings and ordered actions. Unused multi-click/hold
@@ -33,13 +35,31 @@ The working firmware provides:
   briefly show the icon and name on the display, with optional direction-specific sound cues.
   Default is protected; idle screens can show Clock or Blank.
 - Inactivity sleep turns off the display and LEDs after one hour by default,
-  with a saved timer and wake on any button or knob movement.
+  with a saved timer and wake on any button press or knob turn. Set the timer
+  to `0` to disable it; existing custom timeouts are preserved during OTA.
 
 The display, speaker, ring and four key LEDs have been confirmed on the unit.
 Live checks have verified input events, PSRAM, microphone streaming, light
 readings, saved settings, clock rendering, OTA and USB Ethernet DHCP. Evidence
 and remaining limits are recorded in the [development baseline](docs/development.md#verified-baseline-and-open-items).
 These are bring-up results, not a long-duration reliability qualification.
+
+## Bluetooth and Tab5
+
+Enable **General → Bluetooth**, start pairing, then scan/select **ColoPlay**
+on Tab5. A bonded BLE connection carries controls and authoritative MPD volume,
+Playing/Paused/Stopped, track metadata, seek direction and position feedback.
+The action editor groups Device and Bluetooth commands; volume supports host
+steps, **1/64** and **1/16**, with separate Bluetooth volume/playback screens and
+proportional ring feedback. See [pairing, actions and limits](docs/tab5-integration.md).
+
+The installed **Tab5 BLE** scene supplies knob item navigation/Enter, Back and
+modifier-first Page Up/Down and previous/next-menu combinations. The same two
+buttons can perform different actions in reverse order. Playback uses a small playback-state icon, centered title/artist with a 16 px Japanese
+font, and a configurable clockwise LED-ring progress fill. Connecting uses the
+locally bundled Iconify `andrsrxn:bluetooth-connecting` icon without text.
+General includes saved sound-effects volume for local tones and scene cues. Existing scenes and General settings remain intact.
+Serial companion actions and a dedicated long-sequence editor remain future work.
 
 ## Documentation
 
@@ -50,7 +70,7 @@ Each current topic has one primary guide:
 | Use the clock, lights, sensors, WiFi and USB | [Firmware guide](docs/firmware.md) |
 | Set up tools, back up, build, update or recover | [Flashing and recovery](docs/flash.md) |
 | Integrate controls or read telemetry | [HTTP API](docs/api.md) |
-| Plan Serial/Bluetooth actions, Tab5 pairing and media feedback | [Tab5 integration plan](docs/tab5-integration.md) |
+| Use Bluetooth controls, Tab5 pairing and media feedback | [Tab5 integration guide](docs/tab5-integration.md) |
 | Understand source, settings, tests and constraints | [Development guide](docs/development.md) |
 | Inspect recovered hardware assignments | [Factory-derived GPIO map](docs/gpio-map.md) |
 | Inspect the original backup and factory restore procedure | [Factory firmware](docs/factory-firmware.md) |

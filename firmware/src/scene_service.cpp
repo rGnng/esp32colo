@@ -6,6 +6,7 @@
 #include "scene_cue.h"
 #include "general_service.h"
 #include "audio_demo.h"
+#include "bluetooth_service.h"
 
 namespace SceneService {
 namespace {
@@ -31,7 +32,7 @@ String quote(const char *value) {
 String color(uint32_t rgb) { char value[8]; snprintf(value,sizeof(value),"#%06lx",static_cast<unsigned long>(rgb)); return quote(value); }
 String sceneLighting(const Scene &scene) {
   String out=",\"ring_mode\":"+quote(kLightingModes[scene.ring.mode])+",\"ring_color\":"+color(scene.ring.color)+
-    ",\"keys_mode\":"+quote(kLightingModes[scene.keys.mode])+",\"keys_color\":"+color(scene.keys.color)+",\"icon\":"+quote(SceneIcons::kNames[scene.icon]);
+    ",\"keys_mode\":"+quote(kLightingModes[scene.keys.mode])+",\"keys_color\":"+color(scene.keys.color)+",\"icon\":"+quote(SceneIcons::kNames[scene.icon])+",\"ring_display\":"+quote(kRingDisplays[scene.ringDisplay]);
   const char *names[]={"screen","ring","keys"};
   for(int i=0;i<3;++i) {
     const String channel=names[i];const auto &level=scene.levels[i];
@@ -48,14 +49,17 @@ int index(const String &value, const char *const *list, int count) {
 String inputName(int input) {
   const int mask=comboMask(input);
   if(!mask)return String(kInputs[input]);
-  String out;
-  for(int i=0;i<4;++i)if(mask&(1u<<i)){if(out.length())out+='+';out+=kInputs[i];}
+  const int modifier=comboModifier(input);
+  String out=modifier>=0?String(kInputs[modifier])+">":"";
+  for(int i=0;i<4;++i)if((mask&(1u<<i))&&i!=modifier){if(out.length()&&out[out.length()-1]!='>')out+='+';out+=kInputs[i];}
   return out;
 }
 int readInput(const String &value) {
   const int physical=index(value,kInputs,kInputCount);
   if(physical>=0)return physical;
-  int mask=0,at=0;
+  int mask=0,at=0,modifier=-1;
+  const int arrow=value.indexOf('>');
+  if(arrow>=0){modifier=index(value.substring(0,arrow),kInputs,4);if(modifier<0||arrow==int(value.length())-1)return -1;mask=1u<<modifier;at=arrow+1;}
   while(at<int(value.length())) {
     int end=value.indexOf('+',at);if(end<0)end=value.length();
     const int key=index(value.substring(at,end),kInputs,4);
@@ -63,7 +67,7 @@ int readInput(const String &value) {
     mask|=1u<<key;at=end+1;
     if(end==int(value.length())-1)return -1;
   }
-  return comboMask(kComboFlag|mask)?kComboFlag|mask:-1;
+  return comboMask(comboInput(mask,modifier))?comboInput(mask,modifier):-1;
 }
 bool number(WebServer &server,const char *name,int low,int high,int &out,String &error,bool required=false) {
   if (!server.hasArg(name)) { if (!required) return true; error=String(name)+" is required"; return false; }
@@ -92,6 +96,7 @@ bool commit(String &error,int direction=0) {
     error="could not save scenes to NVS"; return false;
   }
   const int previous=gSettings.active;
+  BluetoothService::cancel();
   gSettings=gCandidate; gStored=true;gLevelDirty=false;++gRevision; ++gEpoch; gFeedback.clear();
   const unsigned cue=SceneCue::frequency(GeneralService::sceneChangeSound(),previous,gSettings.active,direction);
   if(cue)AudioDemo::beep(cue,SceneCue::kDurationMs);
@@ -110,7 +115,10 @@ String list(const char *const *names,int count) {
 void begin(Handler handler) {
   gHandler=handler; gOpen=gPrefs.begin("scenes",false);
   const size_t bytes=gOpen?gPrefs.getBytesLength("settings"):0;
-  if(bytes==sizeof(gSettings)&&gPrefs.getBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings)&&valid(gSettings)){gStored=true;return;}
+  if(bytes==sizeof(gSettings)&&gPrefs.getBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings)){
+    if(valid(gSettings)){gStored=true;return;}
+    if(migrateV4(gSettings)||migrateV3(gSettings)){gStored=gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);if(!gStored)gError="could not persist migrated scenes";return;}
+  }
   // The two legacy layouts share one scratch area, avoiding permanent duplication.
   union Legacy { StoredV1 v1;StoredV2 v2;Legacy():v2(){} };
   static Legacy legacy;
@@ -151,7 +159,7 @@ GestureBindings gestureBindings(){
   GestureBindings out;
   for(const auto &b:gSettings.bindings)if(b.count&&(b.scene==gSettings.active||(b.scene==0&&b.global))){
     const int group=comboMask(b.input);
-    if(group)out.combos[group]|=1u<<b.gesture;else out.physical[b.input]|=1u<<b.gesture;
+    if(group){const int modifier=comboModifier(b.input);if(modifier<0)out.combos[group]|=1u<<b.gesture;else out.ordered[modifier][group]|=1u<<b.gesture;}else out.physical[b.input]|=1u<<b.gesture;
   }
   return out;
 }
@@ -160,6 +168,7 @@ SceneSettings::Light lighting(bool ring) {
   const auto &scene=gSettings.scenes[gSettings.active];
   return ring?scene.ring:scene.keys;
 }
+uint8_t ringDisplay(){return gSettings.scenes[gSettings.active].ringDisplay;}
 uint8_t screen() {
   const auto f=feedback();
   return f.active&&f.screen!=SceneSettings::kUnchanged?f.screen:gSettings.scenes[gSettings.active].screen;
@@ -229,9 +238,10 @@ bool configure(WebServer &server,String &error) {
     name.toCharArray(gCandidate.scenes[id].name,25);
     if(server.hasArg("standby_screen")){
       const int screen=index(server.arg("standby_screen"),kScreens,kScreenCount);
-      if(screen<kClock){error="standby_screen must be clock or blank";return false;}
+      if(screen<kClock){error="invalid idle screen";return false;}
       gCandidate.scenes[id].screen=screen;
     }
+    if(server.hasArg("ring_display")){const int mode=index(server.arg("ring_display"),kRingDisplays,kRingDisplayCount);if(mode<0){error="unknown ring display";return false;}gCandidate.scenes[id].ringDisplay=mode;}
     if(server.hasArg("icon")) {
       const int icon=index(server.arg("icon"),SceneIcons::kNames,SceneIcons::kCount);
       if(icon<0){error="unknown scene icon";return false;}gCandidate.scenes[id].icon=icon;
@@ -287,7 +297,7 @@ bool configure(WebServer &server,String &error) {
       a.type=type; a.led=led; a.screen=screen;
       int value=0,target=0,duration=1500;
       if (!number(server,(prefix+"value").c_str(),-100,4000,value,error)||
-          !number(server,(prefix+"target").c_str(),0,kSceneCount-1,target,error)||
+          !number(server,(prefix+"target").c_str(),0,type==kBluetoothKey?255:kSceneCount-1,target,error)||
           !number(server,(prefix+"feedback_ms").c_str(),250,10000,duration,error)) return false;
       a.value=value; a.target=target; a.feedbackMs=duration;
       if (server.hasArg(prefix+"color")&&!readColor(server.arg(prefix+"color"),a.color)) { error="color must be #RRGGBB"; return false; }

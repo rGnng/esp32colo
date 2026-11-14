@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <cstring>
+#include "coloplay_ble_protocol.h"
 
 namespace SceneSettings {
 constexpr int kSceneCount = 8, kBindingCount = 64, kActionCount = 3, kInputCount = 7;
@@ -9,16 +10,18 @@ enum Gesture : uint8_t { kSingle, kDouble, kTriple, kHold, kHoldRelease,
   kLeft, kRight, kPressLeft, kPressRight, kGestureCount };
 enum Type : uint8_t { kNone, kNextScene, kPreviousScene, kSwitchScene,
   kScreenChange, kScreenSet, kRingChange, kRingSet, kKeysChange, kKeysSet,
-  kVolumeChange, kVolumeSet, kRainbow, kStatic, kToggleAwake, kSync, kTone, kTypeCount };
+  kVolumeChange, kVolumeSet, kRainbow, kStatic, kToggleAwake, kSync, kTone,
+  kBluetoothVolume,kBluetoothMedia,kBluetoothKey,kTypeCount };
 enum Led : uint8_t { kInherit, kProportional, kFeedbackRainbow, kFeedbackStatic, kOff, kLedCount };
-enum Screen : uint8_t { kUnchanged, kClock, kBlank, kScreenCount };
+enum Screen : uint8_t { kUnchanged, kClock, kBlank, kBluetoothVolumeScreen, kBluetoothPlaybackScreen, kScreenCount };
 constexpr const char *kInputs[] = {"key1","key2","key3","key4","knob","open","rec"};
 constexpr const char *kGestures[] = {"single","double","triple","hold","hold_release","left","right","press_left","press_right"};
 constexpr const char *kTypes[] = {"none","next_scene","previous_scene","switch_scene",
   "screen_change","screen_set","ring_change","ring_set","keys_change","keys_set",
-  "volume_change","volume_set","rainbow","static","toggle_awake","sync_time","tone"};
+  "volume_change","volume_set","rainbow","static","toggle_awake","sync_time","tone",
+  "bluetooth_volume","bluetooth_media","bluetooth_key"};
 constexpr const char *kLeds[] = {"inherit","proportional","rainbow","static","off"};
-constexpr const char *kScreens[] = {"unchanged","clock","blank"};
+constexpr const char *kScreens[] = {"unchanged","clock","blank","bluetooth_volume","bluetooth_playback"};
 struct Action {
   uint8_t type = kNone, target = 0, led = kInherit, screen = kUnchanged;
   int16_t value = 0;
@@ -53,9 +56,11 @@ struct StoredV2 {
 struct Level {
   uint8_t overrideGeneral=0,percent=70,automatic=0,reserved=0;
 };
-struct Scene : SceneV2 { Level levels[3]; uint8_t icon=0,reserved2[3]={}; };
+enum RingDisplay : uint8_t { kRingLighting, kRingBluetoothProgress, kRingDisplayCount };
+constexpr const char *kRingDisplays[]={"lighting","bluetooth_progress"};
+struct Scene : SceneV2 { Level levels[3]; uint8_t icon=0,ringDisplay=kRingLighting,reserved2[2]={}; };
 struct Stored {
-  uint32_t version = 3;
+  uint32_t version = 5;
   uint8_t active = 0, reserved[3] = {};
   Scene scenes[kSceneCount];
   Binding bindings[kBindingCount];
@@ -64,14 +69,18 @@ static_assert(sizeof(Action) == 12 && sizeof(StoredV1) == 2792 && sizeof(StoredV
 constexpr int kComboFlag=0x80;
 inline int comboMask(int input) {
   const int mask=input&15;
-  return input==(kComboFlag|mask) && mask && (mask&(mask-1)) ? mask : 0;
+  const int modifier=((input>>4)&7)-1;
+  return input>=kComboFlag&&input<=255&&modifier<4&&mask&&(mask&(mask-1))&&
+    (modifier<0||(mask&(1u<<modifier))) ? mask : 0;
 }
+inline int comboModifier(int input){return comboMask(input)?((input>>4)&7)-1:-1;}
+inline int comboInput(int mask,int modifier=-1){return kComboFlag|((modifier+1)<<4)|mask;}
 inline bool validInput(int input) { return (input>=0&&input<kInputCount)||comboMask(input); }
 inline bool validGesture(int input,int gesture) {
   return validInput(input)&&gesture>=0&&gesture<kGestureCount&&(input==kKnob||gesture<kLeft);
 }
 inline bool exists(const Stored &s, int id) { return id >= 0 && id < kSceneCount && s.scenes[id].used == 1; }
-inline bool percentType(int type) { return type >= kScreenChange && type <= kVolumeSet; }
+inline bool percentType(int type) { return (type >= kScreenChange && type <= kVolumeSet)||type==kBluetoothVolume; }
 inline bool changeType(int type) { return type == kScreenChange || type == kRingChange || type == kKeysChange || type == kVolumeChange; }
 inline bool validName(const char *name) {
   const auto *end = static_cast<const char *>(std::memchr(name, 0, 25));
@@ -88,7 +97,10 @@ inline bool validAction(const Stored &s, const Action &a) {
       a.color > 0xFFFFFF || a.feedbackMs < 250 || a.feedbackMs > 10000) return false;
   if (a.type == kSwitchScene && !exists(s, a.target)) return false;
   if (a.led == kProportional && !percentType(a.type)) return false;
-  if (percentType(a.type) && (a.value > 100 || a.value < (changeType(a.type) ? -100 : 0))) return false;
+  if (a.type>=kScreenChange&&a.type<=kVolumeSet && (a.value > 100 || a.value < (changeType(a.type) ? -100 : 0))) return false;
+  if(a.type==kBluetoothVolume&&a.value!=1&&a.value!=-1&&a.value!=16&&a.value!=-16&&a.value!=64&&a.value!=-64)return false;
+  if(a.type==kBluetoothMedia&&(!cp_media_usage(a.value)||a.target>2||(a.target&&a.value!=0xb3&&a.value!=0xb4)))return false;
+  if(a.type==kBluetoothKey&&(a.value<1||a.value>0xe7))return false;
   if (a.type == kTone && (a.value < 100 || a.value > 4000)) return false;
   return true;
 }
@@ -103,11 +115,11 @@ inline Light resolveLighting(const Light &scene, bool generalStatic, uint32_t ge
   return scene.mode == kGeneralLighting ? Light{generalStatic ? kSceneStatic : kSceneRainbow, generalColor} : scene;
 }
 inline bool valid(const Stored &s) {
-  if (s.version != 3 || !exists(s, 0) || !exists(s, s.active) || !validName(s.scenes[0].name) || std::strcmp(s.scenes[0].name, "Default")) return false;
+  if (s.version != 5 || !exists(s, 0) || !exists(s, s.active) || !validName(s.scenes[0].name) || std::strcmp(s.scenes[0].name, "Default")) return false;
   for (int i=0;i<kSceneCount;++i) {
     const auto &scene=s.scenes[i];
     if (scene.used > 1 || (scene.used && (!validName(scene.name) || scene.screen < kClock || scene.screen >= kScreenCount || !validLight(scene.ring) || !validLight(scene.keys)))) return false;
-    if(scene.used){if(scene.icon>=32)return false;for(const auto &level:scene.levels)if(!validLevel(level))return false;}
+    if(scene.used){if(scene.icon>=32||scene.ringDisplay>=kRingDisplayCount)return false;for(const auto &level:scene.levels)if(!validLevel(level))return false;}
     if (scene.used) for (int j=0;j<i;++j) if (s.scenes[j].used&&!std::strcmp(scene.name,s.scenes[j].name)) return false;
   }
   for (int i = 0; i < kBindingCount; ++i) {
@@ -123,6 +135,18 @@ inline bool valid(const Stored &s) {
   return true;
 }
 // Validate the complete legacy record before replacing the caller's settings.
+inline bool migrateV4(Stored &settings){
+  if(settings.version!=4)return false;
+  for(const auto &scene:settings.scenes)if(scene.used&&scene.ringDisplay)return false;
+  for(const auto &b:settings.bindings)if(b.count&&b.input>=kComboFlag&&b.input!=(kComboFlag|(b.input&15)))return false;
+  settings.version=5;if(valid(settings))return true;settings.version=4;return false;
+}
+inline bool migrateV3(Stored &settings){
+  if(settings.version!=3)return false;
+  for(const auto &scene:settings.scenes)if(scene.used&&scene.screen>kBlank)return false;
+  for(const auto &binding:settings.bindings)if(binding.count){if(binding.count>kActionCount)return false;for(int i=0;i<binding.count;++i)if(binding.actions[i].type>kTone||binding.actions[i].screen>kBlank)return false;}
+  settings.version=4;if(migrateV4(settings))return true;settings.version=3;return false;
+}
 inline bool migrate(const StoredV1 &old, Stored &out) {
   if (old.version != 1) return false;
   Stored candidate;

@@ -3,12 +3,17 @@
 namespace GeneralSettings {
 constexpr uint32_t kMaxSleepMinutes=1440;
 struct StoredV1 {uint32_t version=1,sceneChangeSound=1;};
-struct Stored {uint32_t version=2,sceneChangeSound=1,sleepTimeoutMinutes=60;};
-static_assert(sizeof(StoredV1)==8&&sizeof(Stored)==12,"general settings layout changed");
-inline bool valid(const Stored &settings){return settings.version==2&&settings.sceneChangeSound<=1&&settings.sleepTimeoutMinutes<=kMaxSleepMinutes;}
+struct StoredV2 {uint32_t version=2,sceneChangeSound=1,sleepTimeoutMinutes=60;};
+struct Stored {uint32_t version=3,sceneChangeSound=1,sleepTimeoutMinutes=60,soundVolume=70;};
+static_assert(sizeof(StoredV1)==8&&sizeof(StoredV2)==12&&sizeof(Stored)==16,"general settings layout changed");
+inline bool valid(const Stored &settings){return settings.version==3&&settings.sceneChangeSound<=1&&settings.sleepTimeoutMinutes<=kMaxSleepMinutes&&settings.soundVolume<=100;}
 inline bool migrate(const StoredV1 &old,Stored &out){
   if(old.version!=1||old.sceneChangeSound>1)return false;
   Stored candidate;candidate.sceneChangeSound=old.sceneChangeSound;out=candidate;return true;
+}
+inline bool migrateV2(const StoredV2 &old,Stored &out){
+  if(old.version!=2||old.sceneChangeSound>1||old.sleepTimeoutMinutes>kMaxSleepMinutes)return false;
+  Stored candidate;candidate.sceneChangeSound=old.sceneChangeSound;candidate.sleepTimeoutMinutes=old.sleepTimeoutMinutes;out=candidate;return true;
 }
 inline bool parseSleepMinutes(const char *text,uint32_t &out){
   if(!text||!*text)return false;

@@ -22,6 +22,7 @@ SceneSettings::Level brightness(int channel);
 int adjustBrightness(int channel,int value,bool relative);
 void tick();
 uint8_t screen();
+uint8_t ringDisplay();
 Feedback feedback();
 SceneSettings::Light lighting(bool ring);
 }  // namespace SceneService

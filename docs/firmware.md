@@ -1,10 +1,13 @@
 # Desktop gadget guide
 
-Current baseline: **0.5.4-idle-sleep**. The gadget is configured through the **General**,
+Current baseline: **0.6.4-smooth-progress**. The gadget is configured through the **General**,
 **Scenes** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
 buttons are 14 px, with larger headings and log text. [API](api.md), [development](development.md), and
 [build/update/recovery](flash.md) instructions are maintained separately.
+The [verified release record](development.md#current-verified-release) identifies
+the compiled and OTA-tested image. Bluetooth controls, pairing and feedback are described in the
+[Tab5 integration guide](tab5-integration.md); Serial remains deferred.
 
 ## Connect
 
@@ -173,7 +176,7 @@ between clicks only when Double or Triple is configured. Double without Triple
 resolves on the second release; Triple resolves on the third release. Unmapped
 gestures are not emitted.
 
-Buttons that could be combination members defer their individual single until
+Buttons that could be Any order members or ordered modifiers defer their individual single until
 release, allowing another key to join. The knob also defers its single when a
 press-and-turn binding exists. Press-and-turn consumes its pending click/release;
 turning before the hold threshold suppresses Hold. A Hold that has already fired
@@ -197,9 +200,10 @@ fires when the first member is released. When no combination matches, ordinary
 button handling continues. One combination is recognized at a time; unrelated
 buttons and knob rotation keep normal handling.
 
-On this unit, **Button 1 + Button 2 / Single press → Next scene** was added as a
-Global example for physical testing. Press together to try it, or keep one held and tap the other to repeat.
-It is an editable saved binding, not a hardcoded input action.
+For a scene-switching example, configure **Button 1 + Button 2 / Single press →
+Next scene** in Default and enable **Global**. Press together, or keep one held
+and tap the other to repeat. This is an editable binding; actual saved mappings
+can differ from the example.
 
 These mappings apply while the firmware runs. KEY1 application recovery and
 REC/knob ROM-download behavior during reset remain physical recovery mechanisms.
@@ -209,6 +213,8 @@ REC/knob ROM-download behavior during reset remain physical recovery mechanisms.
 Add up to three commands in the row editor, reorder them, then **Save binding**.
 Use the table's **Delete** control to clear a binding. The currently implemented
 actions belong to these Device groups:
+
+The command selector groups Device actions by purpose and adds Bluetooth controls.
 
 | Group | Actions |
 |---|---|
@@ -221,12 +227,14 @@ actions belong to these Device groups:
 
 Adjustments take a signed per-step value; setters use an absolute percentage.
 Speaker actions control this gadget's ES8311 output, not the computer's volume.
-Serial/Bluetooth actions, pairing and remote playback/volume feedback are
-specified in the [Tab5 integration plan](tab5-integration.md); they are not yet
-available in this firmware.
+Bluetooth adds remote volume (host step, 1/64, 1/16), playback controls and HID
+keys. General contains enable/pair/forget controls. Bluetooth volume/playback
+screens and proportional volume ring feedback use returned MPD state. See the
+[Tab5 integration guide](tab5-integration.md) for setup, mappings and limits.
+Serial companion actions remain deferred.
 
-Each action can keep the current screen or select **Clock** or **Blank**, and can retain
-lighting or temporarily show rainbow, static color, darkness, or proportional
+Each action can keep the current screen or select **Clock**, **Blank**, **Bluetooth volume** or **Bluetooth playback**, and
+can retain lighting or temporarily show rainbow, static color, darkness, or proportional
 ring fill. Proportional fill uses the returned percentage from a brightness or
 speaker action, with partial LED intensity at the boundary. It affects the ring;
 key lighting keeps its general mode. Other temporary LED effects affect both
@@ -244,7 +252,8 @@ Last-input telemetry shows the recognized gesture and last action/result.
 
 ### Standby and screen behavior
 
-Each scene's **Idle screen** can be **Clock** or **Blank**. Blank turns off the
+Each scene's **Idle screen** can be **Clock**, **Blank**, **Bluetooth volume** or
+**Bluetooth playback**. Blank turns off the
 display backlight and stops frame updates while leaving the scene's lighting
 active. Scene-switch icon/name overlays still appear briefly. Actions can also
 apply a temporary Clock or Blank screen effect, then return to the saved idle
@@ -262,7 +271,7 @@ There is no date, timezone label, seconds, sync text or decorative ring.
 | OPEN single | Toggle screen and LEDs |
 | REC single | Play a 660 Hz tone |
 | Knob left / right | Gadget speaker volume -2% / +2%, with proportional ring feedback |
-| Knob press + left / right | Screen selection -3% / +3% |
+| Knob press + left / right | Screen brightness -3% / +3% |
 
 Other gestures start unassigned. The startup tone, fixed diagnostic pages and
 automatic page tour have been retired from the normal gadget interface.
@@ -296,3 +305,26 @@ on reboot. It does not write NVS or capture ROM/panic output. Large console
 status dumps and OTA progress remain serial-only, keeping useful event history
 in the bounded buffer. Firmware-upload logs from the separate HTTP OTA module
 also remain serial-only.
+
+## Ordered combination modifiers and playback display
+
+In the binding editor, choose a Button combination, select its buttons, then
+choose **Modifier · press first**. **None · any order** preserves the existing
+combination behavior. A modifier must go down first; press both together to
+match only an Any order binding. Hold the modifier and tap another member to
+repeat without releasing it. Reversed pairs can be configured independently.
+
+**Ring display** is a scene setting beside the screen/color choices. Select
+Bluetooth playback progress for a clockwise fill using track elapsed/duration;
+action light effects take priority temporarily. Pause holds the fill, Stop and
+unavailable data clear it. This does not change the button LEDs or brightness.
+The Bluetooth playback screen has a compact playback-state icon at the top and centered
+16 px title/artist lines, with no emoji/boxes. Japanese metadata is supported by
+an embedded Noto Sans JP bitmap font. A slim progress bar and time are below;
+the LED ring can also show progress. Unavailable feedback uses only the local
+`andrsrxn:bluetooth-connecting` icon, without connection text.
+
+**General → Sound → Sound effects volume** controls generated tones, including
+scene-switch sounds. It defaults to 70%; zero mutes tones. Remote playback volume
+and the gadget codec speaker setting remain independent. See the
+[Tab5 scene mapping](tab5-integration.md#installed-test-profile).

@@ -52,5 +52,30 @@ int main(){
   // Preserve the assembly window only when a larger configured group could win.
   {Sim s;GestureBindings b;b.combos[3]=b.combos[7]=1u<<kSingle;s.engine.configure((1u<<3)|(1u<<7),b);s.press(3);s.step(20);assert(s.events.empty());s.press(4);s.expect(1,kComboFlag|7,kSingle);s.release(7);assert(s.events.size()==1);}
   {Sim s;GestureBindings b;b.combos[3]=b.combos[7]=1u<<kSingle;s.engine.configure((1u<<3)|(1u<<7),b);s.press(3);s.step(79);assert(s.events.empty());s.step(1);s.expect(1,kComboFlag|3,kSingle);s.release(3);assert(s.events.size()==1);}
+  // Strict modifier-first pairs share a mask but have independent identities.
+  {Sim s;GestureBindings b;b.ordered[kKey4][10]=b.ordered[kKey2][10]=1u<<kSingle;s.engine.configure(1u<<10,b);
+   s.press(8);s.step(1000);s.press(2);s.expect(1,comboInput(10,kKey4),kSingle);
+   s.release(2);s.press(2);s.expect(2,comboInput(10,kKey4),kSingle);s.release(10);
+   s.press(2);s.step(1000);s.press(8);s.expect(3,comboInput(10,kKey2),kSingle);s.release(10);s.step(1000);assert(s.events.size()==3);}
+  // Same-tick presses are not ordered. Wrong-order presses cannot claim a binding.
+  {Sim s;GestureBindings b;b.ordered[kKey4][10]=1u<<kSingle;s.engine.configure(1u<<10,b);
+   s.tap(10);s.step(1000);assert(s.events.empty());s.press(2);s.press(8);s.step(100);s.release(10);s.step(1000);assert(s.events.empty());}
+  // Ordered pairs take priority over an unordered fallback; a true tie uses fallback.
+  {Sim s;GestureBindings b;b.combos[10]=b.ordered[kKey4][10]=1u<<kSingle;s.engine.configure(1u<<10,b);
+   s.press(8);s.press(2);s.expect(1,comboInput(10,kKey4),kSingle);s.release(10);s.press(10);s.expect(2,comboInput(10),kSingle);s.release(10);}
+  // Reuse modifier 4 across targets, then use still-held 2 as the opposite modifier.
+  {Sim s;GestureBindings b;b.physical[kKey1]=1u<<kSingle;b.ordered[kKey4][10]=b.ordered[kKey4][12]=b.ordered[kKey2][3]=b.ordered[kKey2][10]=1u<<kSingle;
+   s.engine.configure((1u<<10)|(1u<<12)|(1u<<3),b);s.press(8);s.press(2);s.expect(1,comboInput(10,kKey4),kSingle);
+   s.release(2);s.press(4);s.expect(2,comboInput(12,kKey4),kSingle);s.release(4);s.press(2);s.expect(3,comboInput(10,kKey4),kSingle);
+   s.release(8);s.press(8);s.expect(4,comboInput(10,kKey2),kSingle);s.release(8);s.press(1);s.expect(5,comboInput(3,kKey2),kSingle);s.release(3);s.step(1000);assert(s.events.size()==5);}
+  {Sim s;GestureBindings b;b.ordered[kKey4][10]=(1u<<kHold)|(1u<<kHoldRelease);s.engine.configure(1u<<10,b);
+   s.press(8);s.step(2000);s.press(2);s.step(600);s.expect(1,comboInput(10,kKey4),kHold);s.release(2);s.expect(2,comboInput(10,kKey4),kHoldRelease);s.release(8);}
+  {Sim s;GestureBindings b;b.ordered[kKey4][10]=1u<<kSingle;s.now=0xfffffff0;s.engine.seed(s.raw,s.now);s.engine.configure(1u<<10,b);s.press(8);s.press(2);s.expect(1,comboInput(10,kKey4),kSingle);}
+  // Bounce on an already-held modifier must not change its press order.
+  {Sim s;GestureBindings b;b.ordered[kKey4][10]=1u<<kSingle;s.engine.configure(1u<<10,b);
+   s.press(8);s.raw[1]=true;s.step();s.step(1);s.raw[3]=false;s.step();s.step(2);s.raw[3]=true;s.step();s.step(25);s.expect(1,comboInput(10,kKey4),kSingle);}
+  // Raw edges one millisecond apart remain ordered even when both debounce together.
+  {Sim s;GestureBindings b;b.ordered[kKey4][10]=1u<<kSingle;s.engine.configure(1u<<10,b);
+   s.raw[3]=true;s.step();s.step(1);s.raw[1]=true;s.step();s.step(25);s.expect(1,comboInput(10,kKey4),kSingle);}
   std::cout<<"PASS combo clicks/holds, staggered/exact groups, member suppression, fallback, cancellation, boot-held, rollover and knob independence\n";
 }

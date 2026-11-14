@@ -4,21 +4,112 @@ Hardware bring-up is complete. The current code is a working foundation for
 feature development; this document describes its implementation and evidence
 limits. User-facing behavior belongs in the [firmware guide](firmware.md),
 requests in the [API](api.md), and build/update procedures in [Flashing](flash.md).
-The proposed Serial/Bluetooth action categories, Tab5 source review, pairing
-and bidirectional media-state contract are in the
-[Tab5 integration plan](tab5-integration.md).
+Bluetooth controls, pairing and the bidirectional media-state contract are in the
+[Tab5 integration guide](tab5-integration.md). Serial companion work remains deferred.
+
+## Current verified release
+
+Application-only OTA on **2026-11-14** deployed the tested integration below.
+The source changes are committed with this release record; base commits and
+artifact fingerprints identify the tested builds.
+
+| Item | Recorded value |
+|---|---|
+| ColoPlay firmware | `0.6.4-smooth-progress`, based on `06b4e8c` |
+| ColoPlay application bytes | 4,071,040 |
+| Running image MD5 | `a128460cf665ea78212086fda1f118e6` |
+| Application SHA-256 | `e3865a18d482a8e6c3052160d1999c4a1e616edd443a27ae212e2123fdb6e7aa` |
+| OTA slot | `ota_app0` |
+| Tab5 BLE source | [`79c5dac`](https://github.com/rGnng/mpdtab5/commit/79c5dacd1f38a955f3ea2a8abff5b719d5d616d3) |
+| Tab5 base | `a34fa8a2c7547573f128b47061d7359f3f504a81` |
+| Tab5 application bytes | 2,842,400 |
+| Tab5 running ELF SHA-256 | `46a7807e5e8e483d0e8b8e2f5bab53e585a0448b1a74f476739be17db28e59c9` |
+
+Production and USB-experiment builds and ColoPlay's host suite pass. Browser
+checks cover offline Bluetooth controls, categorized binding parameters,
+unchanged scene controls and 320–1440 px layouts without JavaScript errors.
+Tab5 focused MPD/volume/BLE tests pass, as do 21 native UI CTests. Its untouched
+`a34fa8a` full suite has eight failures and six fixture errors; the integration
+has the same failures and five errors after fixing the D100H lifecycle fixture's
+missing SD-readiness stub. Comparing failure identities found no new cases.
+
+Live checks confirmed encrypted pairing, persisted-bond reconnect after OTA,
+raw MPD volume and metadata feedback, 64-step/coarse-16 volume round trips,
+pause/resume, both seek directions and release, and Page Up/Down acknowledgments.
+These run saved bindings through HTTP; physical button-to-screen latency was
+not measured. Sleep through the existing runtime control turns off screen and
+LEDs while BLE state remains fresh. An automatic timeout qualification could
+not complete during active physical testing; the prior idle-timer tests pass.
+The custom timer was restored to 20 minutes. Tab5 SD/MPD remain connected and
+its entire `/api/config` matches the pre-update snapshot.
+
+For 0.6.1, v4→v5 scene and v2→v3 General migrations were checked against the
+live pre-OTA snapshot: all existing scene definitions, bindings, active selection,
+scene-cue enable and timeout were preserved. Only the requested Tab5 BLE profile
+was then reconfigured to the eight navigation bindings. Other scene definitions
+were compared before/after and remained unchanged. Live API dispatch verified
+Up/Down, Back, both ordered Page Up/Down bindings and the two ordered bracket
+bindings with Applied results. Enter is verified against Tab5's existing focus
+activation code; it was not invoked blindly on an unknown focused live item.
+Sound gain 0/35 was captured by the audio task, including scene cues, then
+restored to the saved gain. Ring progress reported valid playback fractions. A controlled restart confirmed
+all scene/General settings and ordered bindings persisted, boot confirmation
+completed, and encrypted feedback reconnected without a new panic. Both opposite
+Button 2/4 bindings were then executed independently after reboot. Tab5
+application hash and complete configuration stayed unchanged, with MPD/SD healthy.
+Physical ordering is covered by the recognizer tests; API Run dispatch bypasses
+physical recognition. The production/USB builds, host suite (including the
+GATT initialization regression) and browser form checks pass.
+
+Scene v3→v4 migration preserved existing definitions and settings at first boot.
+The separate Tab5 BLE test profile was added later; existing Global controls
+remain available. Subsequent physical/web edits are user configuration, not a
+reason to restore an old snapshot. General, clock, WiFi, USB and lighting NVS
+remain independent. No bootloader, partition or Tab5 C6 image was changed.
+
+Initialization testing exposed Wi-Fi/BLE coexistence startup failures.
+Enabling Wi-Fi modem sleep before staged controller/host initialization resolved
+that startup failure. A subsequent GATT crash was captured in the 0.6.1 test:
+`BLECharacteristic::handleGATTServerEvent` handled CONF through the unstarted
+battery characteristic implicitly created by `BLEHIDDevice`, leading to
+`BLEServer::getConnId()` / LoadProhibited. Explicitly constructing only the used
+HID and device-info services removes that uninitialized characteristic. The
+regression fixture checks that all published characteristics have initialized
+service ownership before confirmation dispatch, without advertising a fictitious
+battery. Retained panic records now identify the exact crashing ELF hash.
+
+This is a first working BLE integration, not long-duration reliability
+qualification. Generic PC HID and the physical direction/origin of the LED fill
+still require hands-on verification.
+
+Ignored local evidence is under `backups/ble-first/`: frozen pre-test recovery
+images, candidate-1 Tab5, the earlier candidate-4 ColoPlay, before/after JSON, live command
+results and sleep snapshot. Tab5 was developed in an isolated checkout, then
+its tested source/docs/tests were copied into the original main checkout with
+an assertion that it was still clean at `a34fa8a`. The lock retains baseline
+component hashes, and USB is pinned to 1.6.0 to prevent an incidental upgrade.
+The 0.6.1 evidence is in `backups/ordered-modifiers/`: initial failing image/ELF
+and captured panic in `final/`, corrected image/ELF and manifest in `hid-fixed/`,
+plus preserved configuration snapshots, mapping and validation results.
+The preceding committed ColoPlay release was `0.5.4-idle-sleep` at `06b4e8c`,
+MD5 `e9a9c17bf4b88ed4e3adfe53a58f1d71`; its evidence remains under
+`backups/releases/06b4e8c/`.
 
 ## Source layout
 
 | File / area | Responsibility |
 |---|---|
+| `firmware/src/bluetooth_service.cpp` | Bonded HID/custom GATT transport, bounded queues, preview and returned remote state |
+| `firmware/include/coloplay_ble_protocol.h`, `volume_grid.h` | Shared 20-byte wire contract and Tab5 volume-grid arithmetic |
+| `firmware/src/panic_capture.cpp` | Retained bounded panic diagnosis and crashing ELF identity across reset |
 | `firmware/src/main.cpp` | Startup, WiFi/NVS, shared HTTP routes, serial commands, OTA and recovery orchestration |
-| `firmware/src/hardware_demo.cpp` | GPIO/encoder sampling, Clock rendering, local action dispatch, lighting/ADC and hardware telemetry |
+| `firmware/src/hardware_demo.cpp` | GPIO/encoder sampling, Clock/Blank and scene overlays, inactivity sleep, local action dispatch, lighting/ADC and telemetry |
 | `firmware/src/scene_service.cpp` | Versioned NVS scenes, atomic CRUD/bindings, activation, ordered dispatch and temporary effects |
 | `firmware/include/scene_settings.h` | Bounded scene/action schema, validation, protected Default and reference retargeting |
 | `firmware/include/gesture_engine.h` | Independent nonblocking click/hold/turn recognizers with cancellation |
 | `firmware/include/gesture_policy.h`, `chord_engine.h` | Binding-aware recognition timing and reusable held combination members |
 | `firmware/src/general_service.cpp`, `firmware/include/scene_cue.h` | Persistent General preferences and direction-specific scene sounds |
+| `firmware/include/idle_timer.h` | Nonblocking inactivity countdown and rollover-safe elapsed time |
 | `firmware/src/clock_service.cpp` | NTP, supported timezones, atomic clock settings and time snapshots |
 | `firmware/src/usb_network.cpp` | Selectable CDC-ECM, lwIP netif, one-client DHCP and USB stages/telemetry |
 | `firmware/src/usb_phy_mode.c` | Restore serial/JTAG PHY selection after warm resets |
@@ -42,9 +133,11 @@ now flow through scenes, not the retired diagnostic page/tour handlers.
 
 ## Runtime and persistence
 
-The main loop services HTTP, OTA, NTP and input/peripheral work. Display targets
-are 5 fps for Clock; LED frames target about 30 Hz, ADC sampling every 500 ms and browser polling every second. Audio uses
-its own task. Updates pause hardware/audio processing while writing flash.
+The main loop services HTTP, OTA, NTP and input/peripheral work. Clock and
+scene-overlay frames target 5 fps; Blank/sleep stop display frame updates.
+LED frames target about 30 Hz, ADC sampling every 500 ms and browser status/log
+polling every two seconds while visible. Audio uses its own task. Updates pause
+hardware/audio processing while writing flash.
 Startup and the initial 30-second run window participate in the failed-start
 recovery guard described in [Flashing](flash.md#recovery).
 
@@ -164,11 +257,11 @@ The recognizer preserves held members as combination anchors; a fresh trigger
 press is required in the next scene.
 No input mappings are hardcoded in the polling loop beyond boot recovery.
 
-Percentage-producing actions return values to the feedback controller. Clock
-screen overrides and LED effects have independent, bounded lifetimes and fall
-back to the scene standby/General lighting. Proportional ring output uses a
-fractional final segment and respects ring brightness; key LEDs retain their
-General output for this effect. No computer volume or external data source is
+Percentage-producing actions return values to the feedback controller. Clock/
+Blank screen overrides and LED effects have independent, bounded lifetimes and
+fall back to the scene's idle screen and lighting. Proportional ring output uses
+a fractional final segment and respects ring brightness; key LEDs retain their
+scene output for this effect. No computer volume or external data source is
 fabricated: the future companion app will supply those integrations.
 
 NVS writes are bounded by one fixed scene record and use save-before-apply for
@@ -499,3 +592,149 @@ reachable; explicit web wake restored the scene's selected levels. Physical
 button/knob wake still needs hands-on observation. The timer was restored to
 60 minutes and the temporary scene removed; original scene definitions and
 sound preferences were preserved. Evidence: `backups/idle-sleep/`.
+
+## Bluetooth scenes and storage (0.6.0)
+
+Scene version 4 keeps the v3 3304-byte layout, adding enum values for Bluetooth
+volume/media/key actions and volume/playback screens. Migration validates v3's
+old enum bounds before changing its version; invalid records are not partially
+migrated. Native settings and protected Default behavior remain unchanged.
+Older firmware cannot read v4 records; disable BLE rather than downgrading for
+radio recovery. `bluetooth/settings` is a separate 16-byte NVS record storing
+enabled state and known public peer address; SDK bonding keys remain separate.
+
+The pinned built-in Arduino BLE stack is initialized lazily after hardware is
+ready. Wi-Fi modem sleep is enabled before controller/host startup for coexistence.
+Initialization errors are reported and do not cause an unbounded retry loop.
+Disabling radio advertising/disconnecting leaves the allocated stack resident,
+avoiding unsupported deinit/reinit churn. No new library dependency was added.
+
+`PanicCapture` wraps the SDK panic handler without replacing its reset behavior.
+It retains bounded scalar fields, reason and up to 16 PC addresses in RTC RAM;
+it performs no allocation, network or flash writes in the panic path. Addresses
+must be decoded against the exact frozen ELF of the crashing image. This uses
+the pinned SDK's private panic ABI and must be reviewed on SDK upgrades.
+
+## Ordered modifiers, effects gain and playback layout (0.6.1)
+
+Scene schema 5 preserves the 3304-byte layout. A combination input keeps its
+four-member mask in bits 0–3; bits 4–6 encode modifier index + 1 (zero is Any
+order), and bit 7 remains the combination flag. Reserved scene byte 0 now stores
+ring display. Strict v4 migration rejects new input encodings/ring modes in a
+legacy record, then preserves old fields while upgrading the version. General
+schema 3 adds a saved 0–100 sound-effects gain, default 70, to a 16-byte record;
+v1/v2 migrations preserve scene-cue enable and inactivity timeout.
+
+ChordEngine tracks debounced presses with their raw-edge timestamps. Bounces
+on an already-held key do not change its ordering. Modifier-first groups have
+independent gesture/click state from each other and unordered groups; exact
+ordered matches take priority. Simultaneous edges have no order. The modifier
+can remain held while targets release/repress or switch, without duplicate
+standalone actions. Tests cover reversed orders, ties, wrong order, reused
+modifiers, held actions, bounce and timer rollover alongside existing gestures.
+
+General effects gain scales generated tone samples before the existing codec
+speaker level. It includes scene cues and local tone actions; remote MPD volume
+and brightness stay independent. The audio task captures gain with each tone
+request and exposes `last_tone_volume`. Zero generates silent samples.
+
+Scene ring progress uses fresh returned Bluetooth playback time, extrapolates
+only while playing without seeking, freezes on pause, clears on stop/stale data,
+and clamps to duration. Partial segment coverage smooths the nine LEDs. Scene
+colors/brightness remain the source; explicit action effects temporarily take
+priority. The LCD playback screen draws play/pause/stop/seek shapes above title
+and artist, measures long lines and ellipsizes at UTF-8 boundaries, and removes
+the LCD progress bar. No emoji font or raster asset is added.
+
+## Japanese playback font and compact layout (0.6.2)
+
+The playback screen uses an offline 16 px Noto Sans JP font, covering all 16,732
+characters mapped by the pinned Regular 2.004 Japanese subset OTF. The upstream
+unmodified source/license live in `assets/fonts/noto-sans-jp/`; its SHA-256 is
+`dff723ba59d57d136764a04b9b2d03205544f7cd785a711442d6d2d085ac5073`.
+The optional `scripts/generate_playback_font.py` uses Pillow 12.0.0, fontTools
+4.60.1 and CairoSVG 2.8.2 to generate checked-in `playback_assets.h`. Normal
+firmware builds do not need these packages or network access.
+
+The CPF1 font contains a sorted 16-byte metric record per codepoint and packed
+4-bit antialiased glyph coverage, totaling 2,353,610 flash bytes. Binary-search
+lookup reads only required metrics/bitmaps from mapped flash. There is no font
+cache/all-glyph allocation in internal RAM or PSRAM. The renderer fits each line
+by measured advance, preserves UTF-8 boundaries, supports supplementary-plane
+codepoints, skips incomplete trailing sequences and substitutes `?` for missing
+glyphs. All glyph offsets/bounds, Japanese/Latin coverage, malformed UTF-8,
+measured ellipsis and circular metadata layout have host tests.
+
+A small status icon/label sits at y=54, with title/artist baselines 115/139 around
+vertical center and a slim progress/time area below. The state icon is drawn,
+not emoji. Unavailable Bluetooth feedback on both volume/playback screens shows
+only the bundled Iconify `andrsrxn:bluetooth-connecting` 32 px duotone icon.
+The original SVG/MIT license are in `assets/icons/andrsrxn/`; its 4-bit bitmap is
+512 bytes. No Iconify runtime, CDN, filesystem font loader or settings schema
+change is introduced. Ring progress, bindings and sound gain remain unchanged.
+
+Both production and USB-experiment builds fit the existing 4.5 MiB application
+slots; partitions/bootloader stay unchanged. The corrected 0.6.1 app remains a
+compatible local recovery image because scene/General schemas are unchanged.
+Evidence and frozen images are under ignored `backups/japanese-playback/`.
+`layout-preview.png` is a host rendering reference, not a physical LCD capture.
+
+Live 0.6.2 OTA verification confirmed the running image fingerprint and boot
+confirmation, unchanged scenes/bindings/active selection and General settings,
+continued MPD/SD on the unchanged Tab5 firmware, and fresh BLE metadata. Playback
+refresh measured **19.6 fps**, with **84,376 bytes free internal heap** and
+**8,255,003 bytes free PSRAM** in the captured sample. Japanese/Latin rendering
+and circular bounds are verified by host font tests and the layout preview;
+the live track at verification was Latin, so this is not a physical Japanese
+LCD photograph. Existing partitions and settings schemas were preserved.
+
+A bounded disable/re-enable check exercised the icon-only unavailable branch:
+frames continued updating without a panic, then the saved bonded peer and fresh
+playback feedback reconnected. Bluetooth enabled state was restored afterward.
+
+## Icon-only playback state (0.6.3)
+
+Removed Playing/Paused/Stopped/Fast Forward/Rewind text from the playback
+header, leaving only its small centered state icon. Removed playback's footer
+status words and the volume screen's Playing/Paused line. Title/artist stay
+centered with the 16 px Japanese font, and progress/time remain below. API/web
+diagnostics retain state and command outcomes. No settings/schema changes.
+
+## Continuous shared playback clock (0.6.4)
+
+The periodic Tab5 GATT state copies cached MPD time, typically refreshed once
+per second, while BLE state runs about twice per second and command results may
+send additional copies. Previously every packet reset `receivedAt` and rendering
+used `elapsedMs + now - receivedAt`; repeated old positions therefore rolled
+both indicators backward. Live samples confirmed repeated elapsed positions.
+
+`PlaybackClock` now separates packet freshness from the display anchor. Updates
+and snapshot projection use the Bluetooth state lock, capturing `millis()` inside
+the lock to avoid a newer anchor paired with an older query time. One projected
+`positionMs` feeds LCD progress/time, LED progress and telemetry. Raw `elapsedMs`
+remains unchanged for reporting. No allocations, polling increase, protocol
+change, NVS migration or Tab5 change is needed.
+
+Duplicate samples only refresh packet freshness. Ordinary new samples preserve
+position at receipt and repay phase error at a bounded ±12.5% clock rate; small
+older cached positions are ignored. Seek flags, playback transitions, track
+identity changes, reconnect/stale recovery and inferred >=2-second position
+jumps reanchor immediately. Repeated source stalls cap extrapolation at three
+seconds; connection freshness expires at five seconds. Same-track metadata
+refreshes do not reset time. Track changes await the next position sample.
+
+Tests replay 1 Hz MPD / 2 Hz BLE plus extra ACKs at 25 ms render intervals and
+assert nondecreasing position and ring coverage through ordinary playback.
+They also cover positive/negative corrections without receipt jumps, uneven and
+delayed samples, pause/resume, bidirectional seeks, same-track repeat, metadata
+refresh/new tracks, buffering/stalls, unavailable state, end clamping, reconnect
+and millis rollover. Frozen deployment/sampling evidence is under ignored
+`backups/smooth-progress/release/`.
+
+Live 0.6.4 verification confirmed boot, encrypted feedback, unchanged scene/General
+settings and unchanged Tab5 application hash with MPD/SD healthy. Sampling made
+**35 ordinary-playback comparisons** without a backward display step, including
+**3 repeated raw positions** while the display clock continued forward. One
+captured pair retained raw `60066` ms while display position advanced from
+`59927` to `60973` ms. Refresh remained **19.4 fps**; no panic was recorded.
+These are software position samples, not a physical high-speed LCD/LED recording.

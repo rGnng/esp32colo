@@ -99,7 +99,7 @@ int main() {
   StoredV2 old;old.active=modern.active;
   for(int i=0;i<kSceneCount;++i)old.scenes[i]=modern.scenes[i];
   for(int i=0;i<kBindingCount;++i)old.bindings[i]=modern.bindings[i];
-  assert(migrateV2(old,migrated)&&valid(migrated)&&migrated.version==3);
+  assert(migrateV2(old,migrated)&&valid(migrated)&&migrated.version==5);
   assert(!std::memcmp(&modern,&migrated,sizeof(migrated)));
   Binding combo;combo.input=kComboFlag|3;combo.gesture=kHold;combo.count=1;
   assert(assign(migrated,combo)&&valid(migrated)&&binding(migrated,0,kComboFlag|3,kHold));

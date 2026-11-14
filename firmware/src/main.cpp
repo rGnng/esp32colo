@@ -1,4 +1,5 @@
 #include "device_log.h"
+#include "panic_capture.h"
 // ColoPLAY V1 hardware demo. Keep the factory bootloader / partition tables.
 
 #include <Arduino.h>
@@ -17,6 +18,7 @@
 #include "clock_service.h"
 #include "scene_service.h"
 #include "general_service.h"
+#include "bluetooth_service.h"
 #include "usb_network.h"
 #include "usb_experiment.h"
 #include "web_ui.h"
@@ -28,7 +30,7 @@ constexpr const char *kHostname = "coloplay";
 #ifdef COLOPLAY_USB_CONCURRENCY_TEST
 constexpr const char *kFirmwareVersion = "0.4.1-usb-concurrency-test";
 #else
-constexpr const char *kFirmwareVersion = "0.5.4-idle-sleep";
+constexpr const char *kFirmwareVersion = "0.6.4-smooth-progress";
 #endif
 constexpr const char *kPrefsNamespace = "wifi";
 constexpr uint32_t kWifiRetryMs = 10000;
@@ -190,6 +192,7 @@ String statusJson() {
   json += "\"clock\":" + ClockService::statusJson() + ",";
   json += "\"usb\":" + UsbNetwork::statusJson() + ",";
   json += "\"general\":" + GeneralService::statusJson() + ",";
+  json += "\"bluetooth\":" + BluetoothService::statusJson() + ",";
   json += "\"scene\":" + SceneService::statusJson() + ",";
   json += "\"hardware\":" + HardwareDemo::statusJson();
   json += "}";
@@ -262,6 +265,11 @@ void setupHttp() {
     server.send(200, "application/json", statusJson());
   });
   server.on("/api/general",HTTP_GET,[]{server.send(200,"application/json",GeneralService::statusJson());});
+  server.on("/api/bluetooth",HTTP_GET,[]{server.send(200,"application/json",BluetoothService::statusJson());});
+  server.on("/api/bluetooth",HTTP_POST,[]{
+    String error;if(!BluetoothService::configure(server,error)){server.send(400,"application/json","{\"error\":\""+jsonEscape(error)+"\"}");return;}
+    server.send(200,"application/json",BluetoothService::statusJson());
+  });
   server.on("/api/general",HTTP_POST,[]{
     String error;
     if(!GeneralService::configure(server,error)){server.send(400,"application/json","{\"error\":\""+jsonEscape(error)+"\"}");return;}
@@ -406,6 +414,7 @@ void setupOta() {
 }  // namespace
 
 void setup() {
+  PanicCapture::begin();
   HardwareDemo::captureBootStage();
   UsbNetwork::prepareSerial();
   Serial.begin(115200);
@@ -444,6 +453,7 @@ void setup() {
 
   loadWifiCredentials();
   GeneralService::begin();
+  BluetoothService::load();
   ClockService::begin();
   SceneService::begin(HardwareDemo::applyAction);
   UsbNetwork::loadSettings();
@@ -518,6 +528,7 @@ void loop() {
       gHardwareStartedAt = millis();
     }
     HardwareDemo::tick();
+    BluetoothService::tick(HardwareDemo::ready()&&!gRecoveryMode);
     if (HardwareDemo::ready() && !gBootConfirmed &&
         millis() - gHardwareStartedAt >= 30000) {
       gBootConfirmed = true;

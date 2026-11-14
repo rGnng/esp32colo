@@ -39,10 +39,26 @@ General, Scenes and Device panels, a desktop navigation rail and mobile tabs.
 Add new top-level pages to app.js's `pages` array and matching navigation/panel
 markup; APIs and NVS remain the responsibility of the firmware services.
 
+The 0.6.1 panels include:
+
+- General: WiFi status and SSID/password dialog, USB, NTP/timezone, independent
+  lighting/Auto controls, scene-change sound, inactivity timeout, sound-effects gain and Bluetooth
+  enable/pair/forget/status.
+- Scenes: Clock/Blank/Bluetooth volume/playback idle screen, icon-only selector with named tooltips,
+  scene colors/brightness overrides, playback-progress ring, ordered modifier
+  combinations, Global bindings and ordered
+  grouped Device/Bluetooth commands with screen/light effects.
+- Device: diagnostics, runtime sleep/wake control, incremental logs, telemetry
+  and the authenticated firmware updater link.
+
+Bluetooth feedback uses the device's BLE service, independently of the two-second
+web status poll. Serial companion controls remain deferred. See the
+[Tab5 integration guide](../../docs/tab5-integration.md).
+
 Status polls every two seconds while the page is visible. Hidden tabs skip
 polls and refresh on return. Full telemetry is formatted only while its Device
-panel disclosure is open. Scene edits and saves retain the existing APIs and
-NVS schema. Status messages use fixed space beside the page title, including
+panel disclosure is open. Scene edits use the existing CRUD API, with ordered input identities and a
+saved ring-display field. Schema migrations preserve older settings. Status messages use fixed space beside the page title, including
 when empty, so saves and errors cannot shift the panels. The Device log viewer
 reads incremental chunks only while open/visible and running; its download is
 created locally in the browser.

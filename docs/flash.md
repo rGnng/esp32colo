@@ -3,6 +3,8 @@
 This is the primary procedure for the current firmware. For controls and
 configuration see the [firmware guide](firmware.md). Earlier version records
 are in [bring-up history](history/bring-up.md).
+The latest tested version, source commit and image fingerprints are recorded
+in [Current verified release](development.md#current-verified-release).
 
 ## Tool setup and build
 
@@ -58,7 +60,10 @@ It does not print the password or pass it in the process argument list.
 The script validates the S3 application descriptor, image checksum and appended
 SHA-256, uploads with an MD5 header, then waits for the device's `sketch_md5`
 to match the uploaded file. Confirm `hardware.ready` after the startup window,
-not only that the HTTP server has returned.
+then `recovery_mode=false` and `boot_attempts=0` after the 30-second confirmation
+period. Check `running_partition` and a fresh uptime to establish that the
+updated image booted, especially when reinstalling an identical image whose
+MD5 already matched before upload.
 
 ArduinoOTA remains available for installed firmware without HTTP OTA, including
 the earlier `0.1.3-nvs` baseline:
@@ -144,11 +149,15 @@ seed/update NVS even though the bootstrap itself preserves that partition.
 curl http://coloplay.local/api/status
 ```
 
-Check the source version, `sketch_md5`, `running_partition`, `recovery_mode` and
-`hardware.ready`. Hardware startup waits five seconds after the web server is
+Check the source version, `sketch_md5`, `running_partition`, `recovery_mode`,
+`hardware.ready` and `boot_attempts`. Hardware startup waits five seconds after the web server is
 started; WiFi connection and early serial startup add their own time before
-that. Look for advancing display/LED/microphone counters, the PSRAM test result
-and peripheral error counts. The USB mode may change after hardware startup.
+that. Successful hardware startup clears `boot_attempts` after 30 seconds.
+Check the PSRAM result, peripheral errors and advancing microphone/LED counters.
+Display frames advance while Clock or a scene overlay is visible; Blank and
+sleep intentionally stop display refresh. Sleep reports zero effective screen,
+ring and key brightness while leaving HTTP and USB available. The USB mode may
+change after hardware startup.
 
 In serial/JTAG mode the console runs at 115200 baud. In Ethernet mode it is an
 early boot console and then yields the USB PHY to the network interface.
@@ -200,3 +209,15 @@ by `Attempting to boot anyway`. Its specific header/hash difference is explained
 in the [integrity analysis](factory-firmware.md#完整性与-bootloader-头部差异).
 This unit has subsequently booted and completed OTA with that bootloader; that
 finding does not generalize to other checksum failures.
+
+## Bluetooth test recovery
+
+The 0.6.1 migration writes scene version 5 and General version 3 records. Prefer disabling Bluetooth
+over downgrading to pre-Bluetooth firmware, which cannot read those records.
+The existing two-failed-start guard keeps WiFi/HTTP OTA available in recovery.
+Send `POST /api/bluetooth` with form `op=disable`, then use the authenticated
+`POST /api/hardware/retry` to restart hardware. Keep the same OTA admin password.
+Local evidence/recovery images for the first test are under ignored
+`backups/ble-first/`; Tab5's saved pre-test app is based on `a34fa8a`.
+Only application images were changed; no C6, bootloader or partition update is
+required. See [the integration guide](tab5-integration.md) for pairing again.

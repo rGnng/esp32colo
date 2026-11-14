@@ -3,8 +3,14 @@
 This reference describes the current implementation in
 [main.cpp](../firmware/src/main.cpp),
 [hardware_demo.cpp](../firmware/src/hardware_demo.cpp),
+[general_service.cpp](../firmware/src/general_service.cpp),
+[scene_service.cpp](../firmware/src/scene_service.cpp),
 [clock_service.cpp](../firmware/src/clock_service.cpp) and
 [usb_network.cpp](../firmware/src/usb_network.cpp).
+The current release is **0.6.4-smooth-progress**; deployment fingerprints are in the
+[release record](development.md#current-verified-release). Bluetooth's BLE wire
+contract and Tab5 setup are documented in the [integration guide](tab5-integration.md).
+Serial companion framing remains proposed.
 The same server is reachable over WiFi and USB Ethernet; substitute the actual
 address in these examples. Requests use port 80 and form-encoded POST fields,
 not JSON request bodies. Successful configuration responses are JSON.
@@ -14,11 +20,13 @@ not JSON request bodies. Successful configuration responses are JSON.
 | Method / path | Purpose | Authentication / result |
 |---|---|---|
 | `GET /` | Shared settings and diagnostics page | None; HTML |
-| `GET /assets/<name>-<hash>.css` / `.js` | Local static styles/scripts | None; gzip, immutable cache |
+| `GET /assets/<name>-<hash>.<ext>` | Local CSS, JavaScript and SVG assets | None; gzip, immutable cache |
 | `GET /api/status` | Full device telemetry | None; JSON |
 | `GET /api/log` | Bounded application log; optional `after` byte cursor | None; JSON, no-store |
-| `GET /api/general` | General sound preferences | None; JSON |
-| `POST /api/general` | Save General sound preferences | None; JSON |
+| `GET /api/general` | General sound and inactivity-sleep preferences | None; JSON |
+| `POST /api/general` | Partially update General sound/sleep preferences | None; JSON |
+| `GET /api/bluetooth` | Bluetooth configuration, pairing/link and remote state | None; JSON |
+| `POST /api/bluetooth` | Enable/disable, pair/stop or forget | None; JSON |
 | `GET /api/scenes` | Saved scene catalog, bindings, limits and state | None; JSON |
 | `POST /api/scenes` | Scene CRUD, binding saves, activation and saved-gesture execution | None; scene config JSON |
 | `POST /api/lighting` | General lighting, audio test and sleep controls | None; hardware JSON |
@@ -38,7 +46,7 @@ not JSON request bodies. Successful configuration responses are JSON.
 This table reflects the current access model: configuration/reboot routes do
 not inherit OTA authentication. HTTP is not encrypted. Configuration validation
 errors return 400 with an `error` field; WiFi persistence failure returns 500.
-Clock, USB and hardware configuration currently report persistence errors as
+General, clock, USB and hardware configuration report persistence errors as
 400 as well. An unknown route returns 404.
 
 ## Status and telemetry
@@ -58,7 +66,7 @@ curl http://coloplay.local/api/status
 | `general` | Persistent `scene_change_sound`, `sleep_timeout_minutes` and `stored` |
 | `scene` | Active scene, standby/current screen, NVS state, last event/action/result and temporary feedback |
 | `usb` | Configured/active mode, stages, link, counters, DHCP and lease state |
-| `hardware` | Startup stage, page/tour, awake/paused state, `idle_ms` since physical activity and peripheral objects |
+| `hardware` | Startup stage, page/tour, awake/paused state, `idle_ms` since the last inactivity reset and peripheral objects |
 | `hardware.display` | Framebuffer, frame/FPS/TE counters, selected/automatic/effective screen brightness |
 | `hardware.encoder` | Raw edges, decoded position, pin levels and `edges_per_detent=2` |
 | `hardware.leds` | Ring/key brightness and Auto flags, effective levels, mode/color and SPI transfer errors/counters |
@@ -98,6 +106,17 @@ controls scene transitions only. `hardware.audio.last_tone_hz` and
 manual audio tests also update those fields. Next/Previous cues are 880/440 Hz
 for 90 ms and keep their direction at wraparound.
 
+```bash
+curl http://coloplay.local/api/general
+curl -X POST http://coloplay.local/api/general -d 'sleep_timeout_minutes=60'
+curl -X POST http://coloplay.local/api/general -d 'scene_change_sound=0'
+```
+
+These two POSTs preserve the other preference. `hardware.idle_ms` also resets
+on scene/configuration changes, explicit wake and timeout changes. It is runtime
+state, not a saved countdown. Sleep leaves HTTP/USB available and reports
+`hardware.awake=false`; Blank affects only display visibility while awake.
+
 ## Scenes and gesture bindings
 
 `GET /api/scenes` returns `state`, `limits`, recognizer `timing`, the input/
@@ -113,8 +132,8 @@ colors use `#RRGGBB`. `catalog.lighting_modes` lists these choices. Omitted
 lighting fields retain their saved values, including during rename requests.
 `state` and `/api/status.scene` include the active scene's same lighting and icon fields.
 `hardware.display.scene_overlay` is true while the switch icon/name is displayed.
-`standby_screen` accepts `clock` or `blank`; omission retains the current choice.
-`state.screen` reports the resolved Clock/Blank behavior, including temporary
+`standby_screen` accepts `clock`, `blank`, `bluetooth_volume` or `bluetooth_playback`; omission retains the current choice.
+`state.screen` reports the resolved idle/action screen behavior, including temporary
 screen effects. Blank switches off only the display and reports effective
 screen brightness 0; inactivity sleep sets `hardware.awake=false` and all three
 effective brightness channels to 0. Neither changes saved percentages.
@@ -150,8 +169,8 @@ changes for brightness edits without cancelling gestures; `state.epoch` changes
 for configuration/scene switches. Polling clients should observe both.
 
 Combination input strings are canonical `key1+key2`, `key1+key3+key4`, etc.,
-using 2–4 distinct front buttons. Input order is accepted in either direction;
-responses use button order. Knob/OPEN/REC combinations and rotation gestures on
+using 2–4 distinct front buttons. For Any order (`+`), input order is accepted in either direction and responses
+use button order. Modifier-first (`>`) inputs retain their distinct ordering. Knob/OPEN/REC combinations and rotation gestures on
 combinations are rejected. `catalog.combo_inputs` lists supported members and
 `timing.combo_window_ms` is 80. There is no GPIO-injection endpoint; `op=run`
 dispatches a saved logical gesture without testing physical recognition.
@@ -181,21 +200,21 @@ For each action index 0–2 send `a0_type`, `a0_value`, `a0_target`, `a0_led`,
 
 | Field | Values |
 |---|---|
-| `type` | `none`, `next_scene`, `previous_scene`, `switch_scene`, `screen_change`, `screen_set`, `ring_change`, `ring_set`, `keys_change`, `keys_set`, `volume_change`, `volume_set`, `rainbow`, `static`, `toggle_awake`, `sync_time`, `tone` |
+| `type` | `none`, `next_scene`, `previous_scene`, `switch_scene`, `screen_change`, `screen_set`, `ring_change`, `ring_set`, `keys_change`, `keys_set`, `volume_change`, `volume_set`, `rainbow`, `static`, `toggle_awake`, `sync_time`, `tone`, `bluetooth_volume`, `bluetooth_media`, `bluetooth_key` |
 | `value` | Adjustments -100…100 per step; setters 0…100%; tone 100…4000 Hz |
 | `target` | Existing scene ID for `switch_scene` |
 | `led` | `inherit`, `proportional`, `rainbow`, `static`, `off` |
-| `screen` | `unchanged`, `clock` or `blank` |
+| `screen` | `unchanged`, `clock`, `blank`, `bluetooth_volume`, `bluetooth_playback` |
 | `color` | `#RRGGBB`; initial effect color `#40ffaa` |
 | `feedback_ms` | 250…10000; default 1500 |
 
-Proportional feedback is valid only for percentage-producing brightness/speaker
-actions. It fills the ring from their returned percentage; key LEDs keep General
+Proportional feedback is valid for percentage-producing brightness/speaker
+actions and Bluetooth volume. It fills the ring from their returned percentage; key LEDs keep General
 lighting. Other LED effects affect both groups at their configured brightness.
 Temporary effects expire back to General lighting and the scene's standby
-screen. Screen overrides route through the scene service; Clock and Blank are
+screen. Screen overrides route through the scene service; Clock, Blank and both Bluetooth screens are
 implemented. Scene switching ends the gesture's action list.
-Computer volume/data integration is deferred to the companion-app phase.
+Desktop Serial integration is deferred; Bluetooth Tab5 integration is implemented.
 
 ```bash
 curl -X POST http://coloplay.local/api/scenes -d 'op=create&name=Work'
@@ -359,3 +378,92 @@ without `after`. Log text is RAM-only, overwritten at capacity and lost on
 reboot; the API does not log its own reads. There is no persistence or erase
 operation. Web Download runs in the browser and saves the loaded text without
 another full-log transfer.
+
+## Bluetooth (0.6.0)
+
+`POST /api/bluetooth` accepts form `op=enable|disable|pair|stop_pairing|forget`.
+Pair requires enabled Bluetooth and initialized hardware; it opens a 120-second
+window. Forget clears the stored peer and local bonds. Enable is saved in its
+own NVS namespace; no WiFi/scene/General settings are replaced.
+
+GET and POST return `enabled`, `ready`, `stored`, `connected`, `secured`,
+`extension`, `pairing_seconds`, `peer`, `advertising`, `fresh`, `available`,
+`volume`, `preview`, `playback`, `seek`, `request`, `result`, `pending`, `title`,
+`artist`, `track`, `elapsed_ms`, `duration_ms`, and bounded traffic counters.
+Unavailable volume is -1; unknown playback is 255. Preview is a pending grid
+target, not reported MPD volume. Freshness expires after five seconds.
+Initialization diagnostics include `stage`, `last_boot_stage`, `last_boot_heap`
+and `error`; `last_panic` is null or a retained bounded panic record with core,
+exception, fault address, reason, `image_elf_sha256` and backtrace addresses.
+
+Bluetooth binding parameters:
+
+| Type | value | target |
+|---|---|---|
+| `bluetooth_volume` | ±1 host step, ±16 selects 1/16, ±64 selects 1/64 | 0 |
+| `bluetooth_media` | Consumer usage: Play 176, Pause 177, Fast Forward 179, Rewind 180, Next 181, Previous 182, Stop 183, Play/Pause 205, Mute 226 | 0 pulse/tap, 1 start seeking, 2 stop seeking; nonzero only for Forward/Rewind |
+| `bluetooth_key` | Keyboard usage 1–231 | Modifier mask 0–255 |
+
+`screen=bluetooth_volume|bluetooth_playback` attaches remote screens;
+`led=proportional` is allowed on Bluetooth volume. Both screens can be idle
+behaviors. Tab5 accepts only its supported unmodified navigation usages; other
+keys/modifiers return Unsupported. Up to three ordered actions remain the
+sequence limit. See the shared protocol header for wire fields and result IDs.
+
+Scene records migrate from versions 3/4 to 5 without changing their 3304-byte
+layout or existing enum values. Older firmware cannot read new version 5
+settings: back up scene JSON before a downgrade and restore compatible settings
+explicitly. Disabling Bluetooth on 0.6.1 preserves the migrated scenes.
+
+## Ordered modifiers, cue volume and playback ring (0.6.1)
+
+A binding input can express modifier order with `>`: `key4>key2` requires Button
+4 already down before Button 2; `key2>key4` is an independent binding. For three
+or four buttons, put the modifier before `>` and remaining members in a `+` list.
+Replies canonicalize the remaining members in button order. `key2+key4` retains
+Any order behavior. All existing gesture/global/edit/run operations use the full
+ordered string as identity. Wrong-order or simultaneous presses cannot trigger
+an ordered binding; an exact ordered group takes priority over Any order.
+
+Scene `update` accepts `ring_display=lighting|bluetooth_progress` and includes it
+in scene/state JSON. Bluetooth progress uses fresh playback elapsed/duration,
+with paused/stopped/unavailable handling and action-effect priority. Diagnostic
+`hardware.leds.progress_permille` reports 0–1000 or -1 when unavailable.
+
+General `GET/POST /api/general` adds `sound_volume` (integer 0–100, default 70).
+It scales local tone amplitude; it does not set MPD volume or change the codec's
+speaker-level setting. `hardware.audio.last_tone_volume` reports the last tone's
+captured effect gain for verification. Setting 0 is silent.
+
+Scene schema 5 retains the 3304-byte layout: modifier identity uses previously
+unused input bits, and ring display uses one reserved scene byte. Strict v3/v4
+migrations preserve existing bindings, scene fields and active selection.
+General schema 3 adds sound gain to a 16-byte record, preserving v1/v2 scene-cue
+and timeout preferences. Older firmware cannot read these newer records.
+
+## Japanese playback typography (0.6.2)
+
+No settings or NVS schema changes. `hardware.display` adds `playback_font`,
+`playback_font_glyphs` and `playback_font_bytes`. The embedded Noto Sans JP 16 px
+font contains 16,732 glyphs in 2,353,610 flash bytes. Sorted metrics and packed
+4-bit coverage remain flash-backed; only visible glyph pixels are read. UTF-8
+fitting does not split multibyte characters, and unsupported codepoints use `?`.
+Unavailable Bluetooth feedback shows the locally bundled Iconify
+`andrsrxn:bluetooth-connecting` icon with no connection text on either remote
+screen. A compact playback status row sits above vertically centered metadata,
+with a slim LCD progress bar/time below. LED-ring progress behavior is unchanged.
+
+## Shared progress clock (0.6.4)
+
+Bluetooth JSON adds `position_ms` (smoothed display position) and `position_valid`.
+`elapsed_ms` remains the raw position received from Tab5; the two fields have
+separate meanings. Both LCD progress/time and ring progress consume the same
+`position_ms`; neither restarts extrapolation on each heartbeat/ACK.
+
+Duplicate samples refresh link freshness without resetting the display anchor.
+New ordinary samples preserve the displayed position and correct timing with
+at most ±12.5% speed adjustment. Slightly older cached samples are ignored.
+Explicit seek state, pause/resume, new track, reconnect and inferred position
+jumps of at least two seconds reset to the reported position. Stalled source
+samples cap extrapolation after three seconds; link freshness expires after
+five seconds. Raw MPD data, BLE protocol, NVS schemas and Tab5 firmware are unchanged.

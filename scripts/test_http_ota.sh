@@ -25,7 +25,9 @@ python3 -m unittest discover -s tests -p 'test_ota_upload.py' -v
 "${CXX:-c++}" -std=c++11 -Wall -Wextra -Werror -Ifirmware/include tests/usb_dhcp_test.cpp -o "$TEST_BIN"
 "$TEST_BIN"
 
-for fixture in scene_settings gesture_engine action_feedback log_buffer chord_engine scene_cue idle_timer; do
+"${CXX:-c++}" -std=c++11 -Wall -Wextra -Werror -Itests/ble_fakes -Ifirmware/include tests/bluetooth_hid_test.cpp -o "$TEST_BIN"
+"$TEST_BIN"
+for fixture in scene_settings gesture_engine action_feedback log_buffer chord_engine scene_cue idle_timer bluetooth_protocol playback_ring playback_clock bitmap_font; do
   "${CXX:-c++}" -std=c++11 -Wall -Wextra -Werror -Ifirmware/include "tests/${fixture}_test.cpp" -o "$TEST_BIN"
   "$TEST_BIN"
 done

@@ -13,6 +13,10 @@
 #include "scene_icons.h"
 #include "general_service.h"
 #include "idle_timer.h"
+#include "bluetooth_service.h"
+#include "playback_ring.h"
+#include "playback_assets.h"
+#include "bitmap_font.h"
 
 #include <Adafruit_NeoPixel.h>
 #include <TFT_eSPI.h>
@@ -280,6 +284,17 @@ void drawClock() {
   gCanvas.unloadFont();
 }
 
+const BitmapFont::Font &playbackFont(){static const BitmapFont::Font font(PlaybackAssets::kJapanese16,sizeof(PlaybackAssets::kJapanese16));return font;}
+void playbackText(const char *text,int baseline,uint16_t color,int maxWidth=208){
+  char fitted[64];const auto &font=playbackFont();font.fit(text,maxWidth,fitted,sizeof(fitted));
+  uint16_t palette[16];for(int a=0;a<16;++a)palette[a]=gCanvas.alphaBlend(a*17,color,kBackground);
+  font.draw(fitted,120-font.width(fitted)/2,baseline,[&](int x,int y,uint8_t alpha){gCanvas.drawPixel(x,y,palette[alpha]);});
+}
+void bluetoothConnecting(){
+  uint16_t palette[16];for(int a=0;a<16;++a)palette[a]=gCanvas.alphaBlend(a*17,kMuted,kBackground);
+  for(int i=0;i<32*32;++i){const uint8_t packed=PlaybackAssets::kBluetoothConnecting32[i/2],alpha=i&1?packed&15:packed>>4;if(alpha)gCanvas.drawPixel(104+i%32,104+i/32,palette[alpha]);}
+}
+
 void render(uint32_t now) {
   setBacklight();
   if (!gDisplay || !screenVisible(now)) return;
@@ -292,6 +307,31 @@ void render(uint32_t now) {
     gCanvas.drawString(name,120,157,font);
   } else switch (SceneService::screen()) {
     case SceneSettings::kClock: drawClock(); break;
+    case SceneSettings::kBluetoothVolumeScreen: {
+      const auto s=BluetoothService::snapshot();
+      gCanvas.setTextDatum(MC_DATUM);gCanvas.setTextColor(TFT_WHITE,kBackground);
+      if(!s.fresh||!s.available){bluetoothConnecting();break;}
+      gCanvas.drawString("Bluetooth volume",120,54,2);
+      const int value=s.pending&&s.preview>=0?s.preview:s.volume;
+      gCanvas.setTextSize(2);gCanvas.drawString(s.available&&value>=0?String(value)+"%":"--",120,115,4);gCanvas.setTextSize(1);
+      gCanvas.drawString(s.volume<0?"Mixer unavailable":s.pending?"Pending":s.result==CP_UNSUPPORTED?"Unsupported":s.result==CP_BUSY?"Busy":s.result==CP_FAILED?"Failed":"Confirmed",120,168,2);
+      break;
+    }
+    case SceneSettings::kBluetoothPlaybackScreen: {
+      const auto s=BluetoothService::snapshot();
+      if(!s.fresh||!s.available||s.playback>2){bluetoothConnecting();break;}
+      // Icon-only playback status at the top; metadata surrounds screen center.
+      const int left=110,cy=54;
+      if(s.seek){const int direction=s.seek==1?1:-1;for(int n=0;n<2;++n){const int x=left+(direction>0?n*8:18-n*8);gCanvas.fillTriangle(x,cy-7,x,cy+7,x+direction*7,cy,TFT_WHITE);}}
+      else if(s.playback==1)gCanvas.fillTriangle(left+2,cy-8,left+2,cy+8,left+16,cy,TFT_WHITE);
+      else if(s.playback==2){gCanvas.fillRect(left+2,cy-7,5,14,TFT_WHITE);gCanvas.fillRect(left+11,cy-7,5,14,TFT_WHITE);}
+      else gCanvas.fillRect(left+3,cy-6,12,12,TFT_WHITE);
+      playbackText(s.title,115,TFT_WHITE);playbackText(s.artist,139,kMuted);
+      const uint32_t position=s.positionValid?s.positionMs:0;
+      gCanvas.drawRoundRect(46,171,148,4,2,kMuted);if(s.durationMs)gCanvas.fillRoundRect(46,171,int(uint64_t(position)*148/s.durationMs),4,2,TFT_WHITE);
+      char time[32];snprintf(time,sizeof(time),"%lu:%02lu / %lu:%02lu",(unsigned long)(position/60000),(unsigned long)(position/1000%60),(unsigned long)(s.durationMs/60000),(unsigned long)(s.durationMs/1000%60));playbackText(time,196,kMuted,160);
+      break;
+    }
     default: break;
   }
   gCanvas.pushSprite(0, 0);
@@ -301,6 +341,9 @@ void render(uint32_t now) {
 void animateLeds(uint32_t now) {
   if (gLedTest && static_cast<int32_t>(now - gLedTestUntil) >= 0) gLedTest = 0;
   const auto feedback = SceneService::feedback();
+  const auto remote=BluetoothService::snapshot();
+  const int remotePercent=remote.pending&&remote.preview>=0?remote.preview:remote.volume;
+  const int progress=PlaybackRing::progress(remote.fresh&&remote.available&&remote.positionValid,remote.playback,remote.positionMs,remote.durationMs);
   const auto ring = SceneSettings::resolveLighting(SceneService::lighting(true),gLighting.mode==LightingSettings::kStatic,gLighting.color);
   const auto keys = SceneSettings::resolveLighting(SceneService::lighting(false),gLighting.mode==LightingSettings::kStatic,gLighting.color);
   constexpr uint32_t kTestColors[] = {0, 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF};
@@ -310,13 +353,18 @@ void animateLeds(uint32_t now) {
     uint32_t color = gLedTest ? kTestColors[gLedTest] : Adafruit_NeoPixel::gamma32(
         light.mode == SceneSettings::kSceneStatic ? light.color
         : Adafruit_NeoPixel::ColorHSV(hue, 220, 255));
+    if(!gLedTest&&i<Board::kRingPixels&&SceneService::ringDisplay()==SceneSettings::kRingBluetoothProgress){
+      const int coverage=progress<0?0:PlaybackRing::coverage(progress,i,Board::kRingPixels);
+      color=DemoLevels::scaleRgb(color,(coverage*255+500)/1000);
+    }
     if (!gLedTest && feedback.active) {
       using namespace SceneSettings;
       if (feedback.led==kOff) color=0;
       else if (feedback.led==kFeedbackStatic) color=Adafruit_NeoPixel::gamma32(feedback.color);
       else if (feedback.led==kFeedbackRainbow) color=Adafruit_NeoPixel::gamma32(Adafruit_NeoPixel::ColorHSV(hue,220,255));
-      else if (feedback.led==kProportional && i<Board::kRingPixels) {
-        const int coverage=constrain(feedback.percent*Board::kRingPixels-i*100,0,100);
+      else if (feedback.led==kProportional && i<Board::kRingPixels&&(!feedback.remote||(remote.fresh&&remotePercent>=0))) {
+        const int percent=feedback.remote?remotePercent:feedback.percent;
+        const int coverage=constrain(percent*Board::kRingPixels-i*100,0,100);
         color=DemoLevels::scaleRgb(Adafruit_NeoPixel::gamma32(feedback.color),LightingSettings::pwm(coverage));
       }
     }
@@ -367,9 +415,21 @@ int applyAction(const SceneSettings::Action &a, int repetitions) {
     case kToggleAwake: gAwake=!gAwake;gIdle.activity(millis());break;
     case kSync: ClockService::requestSync(); break;
     case kTone: AudioDemo::beep(a.value,200); break;
+    case kBluetoothVolume: {
+      const auto s=BluetoothService::snapshot();const int denominator=abs(a.value);const int usage=a.value>0?0xe9:0xea;
+      if(s.extension)BluetoothService::send(CP_VOLUME,usage,repetitions,denominator);
+      else for(int n=0;n<repetitions;++n)if(!BluetoothService::send(CP_VOLUME,usage,1,denominator))break;
+      const auto after=BluetoothService::snapshot();result=after.preview>=0?after.preview:after.volume;break;
+    }
+    case kBluetoothMedia:
+      if(a.target==2)BluetoothService::send(CP_RELEASE,a.value,1);
+      else {const auto s=BluetoothService::snapshot();if(s.extension&&(a.value==0xb5||a.value==0xb6))BluetoothService::send(CP_MEDIA,a.value,repetitions,a.target,a.target?0:200);else for(int n=0;n<repetitions;++n)if(!BluetoothService::send(CP_MEDIA,a.value,1,a.target,a.target?0:200))break;}
+      break;
+    case kBluetoothKey: {const auto s=BluetoothService::snapshot();if(s.extension)BluetoothService::send(CP_KEY,a.value,repetitions,a.target);else for(int n=0;n<repetitions;++n)if(!BluetoothService::send(CP_KEY,a.value,1,a.target))break;break;}
     default: break;
   }
   if (lightingChanged) { gLightingDirty=true; gLightingChangedAt=millis(); }
+  if(a.type>=kBluetoothVolume)gLastFrame=millis()-200;
   updateBrightness();
   return result;
 }
@@ -469,7 +529,7 @@ void tick() {
 
   if (now - gLastSensors >= 500) { gLastSensors = now; readSensors(); }
   if (now - gLastLeds >= 33) { gLastLeds = now; animateLeds(now); }
-  if (now - gLastFrame >= (gPage == kClockPage ? 200u : 50u)) {
+  if (now - gLastFrame >= (SceneService::screen()>=SceneSettings::kBluetoothVolumeScreen ? 50u : 200u)) {
     gLastFrame = now; render(now);
   }
   if (now - gLastMetrics >= 1000) {
@@ -512,6 +572,7 @@ String statusJson() {
   json += ",\"paused\":" + String(gPaused ? "true" : "false");
   json += ",\"display\":{\"driver\":\"GC9A01\",\"width\":240,\"height\":240";
   json += ",\"scene_overlay\":"+String(gSceneOverlayUntil&&static_cast<int32_t>(gSceneOverlayUntil-millis())>0?"true":"false");
+  json += ",\"playback_font\":\"Noto Sans JP 16\",\"playback_font_glyphs\":"+String(PlaybackAssets::kGlyphCount)+",\"playback_font_bytes\":"+String(PlaybackAssets::kFontBytes);
   json += ",\"framebuffer_ready\":" + String(gDisplay ? "true" : "false");
   json += ",\"frames\":" + String(gFrames) + ",\"fps\":" + String(gFps, 1);
   json += ",\"te_pulses\":" + String(gTePulses) + ",\"te_hz\":" + String(gTeHz, 1);
@@ -534,6 +595,8 @@ String statusJson() {
   json += ",\"keys_brightness\":" + String(gLighting.keys);
   json += ",\"auto_ring\":" + String(gLighting.autoRing ? "true" : "false");
   json += ",\"auto_keys\":" + String(gLighting.autoKeys ? "true" : "false");
+  const auto remote=BluetoothService::snapshot();
+  json += ",\"progress_permille\":"+String(PlaybackRing::progress(remote.fresh&&remote.available&&remote.positionValid,remote.playback,remote.positionMs,remote.durationMs));
   json += ",\"ring_effective\":" + String(gAwake ? gRingLevel : 0);
   json += ",\"keys_effective\":" + String(gAwake ? gKeysLevel : 0);
   json += ",\"mode\":\"" + String(gLighting.mode == LightingSettings::kStatic ? "static" : "rainbow") + "\"";

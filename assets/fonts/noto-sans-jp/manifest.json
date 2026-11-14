@@ -1,0 +1,11 @@
+{
+  "source_sha256": "dff723ba59d57d136764a04b9b2d03205544f7cd785a711442d6d2d085ac5073",
+  "pixel_size": 16,
+  "glyphs": 16732,
+  "font_bytes": 2353610,
+  "bitmap_bytes": 2085886,
+  "format": "CPF1 sorted 16-byte metrics + packed 4-bit coverage",
+  "icon": "andrsrxn:bluetooth-connecting",
+  "icon_pixels": 32,
+  "icon_bytes": 512
+}

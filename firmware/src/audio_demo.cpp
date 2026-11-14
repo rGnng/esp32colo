@@ -2,6 +2,7 @@
 #include "audio_demo.h"
 #include "board_pins.h"
 #include "demo_levels.h"
+#include "general_service.h"
 
 #include <cmath>
 #include <driver/i2c.h>
@@ -20,7 +21,7 @@ Snapshot gState;
 es8311_handle_t gCodec = nullptr;
 bool gPaused = false;
 uint32_t gRequest = 0, gDuration = 250;
-unsigned gFrequency = 660;
+unsigned gFrequency = 660,gToneVolume=70;
 
 esp_err_t readRegister(uint8_t address, uint8_t reg, uint8_t &value) {
   return i2c_master_write_read_device(kI2c, address, &reg, 1, &value, 1,
@@ -38,20 +39,21 @@ esp_err_t configureVolume(int percent) {
 void run(void *) {
   int16_t tx[kFrames * 2] = {}, rx[kFrames * 2] = {};
   uint32_t seenRequest = 0, remaining = 0;
-  float phase = 0, increment = 0;
+  float phase = 0, increment = 0, amplitude=0;
   while (true) {
     portENTER_CRITICAL(&gMux);
     const bool paused = gPaused;
     const uint32_t request = gRequest;
     const unsigned frequency = gFrequency;
     const uint32_t duration = gDuration;
+    const unsigned toneVolume=gToneVolume;
     portEXIT_CRITICAL(&gMux);
     bool started = false;
     if (request != seenRequest) {
       seenRequest = request;
       remaining = duration * kSampleRate / 1000;
       increment = kTau * frequency / kSampleRate;
-      phase = 0;
+      phase = 0;amplitude=4096.0f*toneVolume/100;
       started = !paused;
     }
     if (paused) remaining = 0;
@@ -62,7 +64,7 @@ void run(void *) {
         const uint32_t elapsed = duration * kSampleRate / 1000 - remaining;
         envelope = fminf(1, fminf(elapsed / 80.0f, remaining / 80.0f));
       }
-      const int16_t sample = remaining ? sinf(phase) * 4096 * envelope : 0;
+      const int16_t sample = remaining ? sinf(phase) * amplitude * envelope : 0;
       tx[i * 2] = tx[i * 2 + 1] = sample;
       if (remaining) --remaining;
       phase += increment;
@@ -108,7 +110,7 @@ void run(void *) {
     gState.rxFrames += frames;
     if (txResult != ESP_OK || rxResult != ESP_OK ||
         written != sizeof(tx) || received != sizeof(rx)) ++gState.ioErrors;
-    if (started && written){++gState.tonesPlayed;gState.lastToneHz=frequency;gState.lastToneDurationMs=duration;}
+    if (started && written){++gState.tonesPlayed;gState.lastToneHz=frequency;gState.lastToneDurationMs=duration;gState.lastToneVolume=toneVolume;}
     gState.rms = rms;
     gState.peak = peak;
     gState.dbfs = rms > 0 ? fmaxf(-96, 20 * log10f(rms / 32768)) : -96;
@@ -226,6 +228,7 @@ Snapshot snapshot() {
 void beep(unsigned frequency, unsigned durationMs) {
   if (!gState.task) return;
   portENTER_CRITICAL(&gMux);
+  gToneVolume=GeneralService::soundVolume();
   gFrequency = constrain(frequency, 100u, 4000u);
   gDuration = constrain(durationMs, 30u, 1500u);
   ++gRequest;
@@ -269,6 +272,7 @@ String statusJson() {
   json += ",\"io_errors\":" + String(s.ioErrors);
   json += ",\"tones_played\":" + String(s.tonesPlayed);
   json += ",\"last_tone_hz\":"+String(s.lastToneHz)+",\"last_tone_duration_ms\":"+String(s.lastToneDurationMs);
+  json += ",\"last_tone_volume\":"+String(s.lastToneVolume);
   json += ",\"tone_active\":" + String(s.tone ? "true" : "false");
   json += ",\"mic_rms\":" + String(s.rms, 2);
   json += ",\"mic_peak\":" + String(s.peak, 2);

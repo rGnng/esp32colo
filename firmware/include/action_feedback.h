@@ -6,7 +6,7 @@
 class ActionFeedback {
  public:
   struct State {
-    bool active=false;
+    bool active=false,remote=false;
     uint8_t led=SceneSettings::kInherit, screen=SceneSettings::kUnchanged;
     int percent=0;
     uint32_t color=0;
@@ -15,6 +15,7 @@ class ActionFeedback {
   void apply(const SceneSettings::Action &action,int percent,uint32_t now) {
     if (action.led!=SceneSettings::kInherit) {
       state_.led=action.led; state_.color=action.color;
+      state_.remote=action.type==SceneSettings::kBluetoothVolume&&action.led==SceneSettings::kProportional;
       state_.percent=percent<0?0:percent; ledUntil_=now+action.feedbackMs;
     }
     if (action.screen!=SceneSettings::kUnchanged) {

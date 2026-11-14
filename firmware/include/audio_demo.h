@@ -7,7 +7,7 @@ struct Snapshot {
   uint8_t address = 0, idHigh = 0, idLow = 0, version = 0;
   int error = 0, volume = 75;
   uint8_t dacVolumeRegister = 0;
-  uint16_t lastToneHz=0,lastToneDurationMs=0;
+  uint16_t lastToneHz=0,lastToneDurationMs=0,lastToneVolume=0;
   uint32_t rxFrames = 0, txFrames = 0, ioErrors = 0, tonesPlayed = 0;
   float rms = 0, peak = 0, dbfs = -96;
   int16_t waveform[64] = {};

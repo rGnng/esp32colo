@@ -1,8 +1,9 @@
 #pragma once
 #include "scene_settings.h"
 struct GestureBindings {
-  uint16_t physical[SceneSettings::kInputCount],combos[16];
+  uint16_t physical[SceneSettings::kInputCount],combos[16],ordered[4][16]={};
   explicit GestureBindings(uint16_t value=0){for(auto &m:physical)m=value;for(auto &m:combos)m=value;}
+  uint16_t policy(int group)const{return group<16?combos[group]:ordered[(group>>4)-1][group&15];}
 };
 namespace GesturePolicy {
 constexpr uint16_t kAll=(1u<<SceneSettings::kGestureCount)-1;
