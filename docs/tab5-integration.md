@@ -1,7 +1,8 @@
 # Bluetooth controls and Tab5 feedback
 
-Current ColoPlay firmware: **0.6.19-scene-order**, source
-[`18f3a79`](https://github.com/rGnng/esp32colo/commit/18f3a793fcc9749a0afcc0eb6c98f860f96f8659). The recorded Tab5 peer driver is
+Current ColoPlay firmware: **0.6.20-network-panel**; its source/build identity
+is in the [release record](development.md#current-verified-release).
+The recorded Tab5 peer driver is
 [`79c5dac`](https://github.com/rGnng/mpdtab5/commit/79c5dacd1f38a955f3ea2a8abff5b719d5d616d3),
 built on [`a34fa8a`](https://github.com/rGnng/mpdtab5/commit/a34fa8a2c7547573f128b47061d7359f3f504a81).
 The existing MPD volume-grid helper and worker remain authoritative. Tab5's

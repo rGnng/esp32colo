@@ -1,12 +1,12 @@
 # Desktop gadget guide
 
-Current baseline: **0.6.19-scene-order**. The gadget is configured through the **General**,
+Current baseline: **0.6.20-network-panel**. The gadget is configured through the **General**,
 **Scenes** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
 buttons are 14 px, with larger headings and log text. [API](api.md), [development](development.md), and
 [build/update/recovery](flash.md) instructions are maintained separately.
 The [verified release record](development.md#current-verified-release) identifies
-the compiled and OTA-tested image from source `18f3a79`. Bluetooth controls,
+the compiled and OTA-tested image and its source baseline. Bluetooth controls,
 pairing and feedback are described in the
 [Tab5 integration guide](tab5-integration.md); Serial remains deferred.
 
@@ -23,23 +23,41 @@ refreshes every two seconds while the page is visible and pauses in hidden tabs.
 
 ## General
 
-### WiFi
+The Network overview spans the top of the page. Below it, desktop groups
+Lighting, Sound and Sleep in the left column, with Bluetooth and Time in the
+right column. Narrow screens stack the groups.
+
+### Network
+
+WiFi and USB share one read-only panel. Each interface has an **Edit** button
+that opens its own modal. Network save/restart and error notifications stay in
+the reserved panel/modal title area. Status polling leaves modal drafts intact;
+Cancel or Escape discards the draft without saving or restarting.
+
+#### WiFi
 
 The panel shows **SSID**, connection status, RSSI in dBm and the current IP.
-Click **Edit and restart** to open the SSID/password modal, then **Save and
-restart** to apply them. Cancel leaves the settings unchanged. A blank password
+Click **Network → WiFi → Edit** to open the SSID/password modal, then
+**Save and restart** to apply them. Cancel leaves the settings unchanged. A blank password
 retains the stored password. Initial credentials come from `secrets.h`; subsequent boots
 and OTA use the `wifi` NVS namespace. Recovery console commands are documented
 in [Flashing](flash.md#recovery).
 
 <a id="usb-networking-and-serialjtag"></a>
 
-### USB-CDC Network
+#### USB-CDC Network
 
-Choose CDC-ECM network (macOS/Linux) or serial/JTAG. Configure device IP and
+The overview shows active mode, status, device IP/prefix and computer IP.
+Serial/JTAG shows no active network addresses; its tooltip retains the configured
+mode when a recovery override is active.
+
+Open **Network → USB → Edit** to choose CDC-ECM network (macOS/Linux) or
+serial/JTAG. Configure device IP and
 prefix (1–30); the firmware chooses a different usable host in that subnet for
 the single DHCP client. No gateway or DNS is advertised. The initial network is
-172.32.29.1/30 with peer 172.32.29.2. Saving restarts the gadget. Reconnect/renew
+172.32.29.1/30 with peer 172.32.29.2. **Save and restart** applies the changes.
+Address/prefix fields appear only for CDC-ECM; selecting serial/JTAG saves only
+the mode and keeps the stored network values. Reconnect/renew
 the computer's USB interface when changing its subnet.
 
 Existing custom addresses are preserved. An unchanged previous default of

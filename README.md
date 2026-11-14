@@ -13,13 +13,13 @@ development. The build target and default hostname remain `coloplay`.
 
 ## Current baseline
 
-Current firmware: **`0.6.19-scene-order`**, committed as
-[`18f3a79`](https://github.com/rGnng/esp32colo/commit/18f3a793fcc9749a0afcc0eb6c98f860f96f8659). It includes saved scene ordering,
-manual brightness, symmetric ring fills, source-key lighting feedback and
-searchable HID keys. Tab5 uses the recorded BLE integration built on
-**`a34fa8a`** and its existing MPD volume logic.
-Both devices use application-only OTA. The latest ColoPlay deployment,
-validation results and image fingerprints are in the
+Current firmware: **`0.6.20-network-panel`**. General now combines WiFi and USB
+status in one Network panel, with separate modal editors and grouped controls
+below. Saved scene order, manual brightness, symmetric ring fills, source-key
+lighting and searchable HID keys remain available. Tab5 uses its recorded BLE
+integration and existing MPD volume logic.
+Both devices use application-only OTA. Source/build identity, validation results
+and image fingerprints are in the
 [release record](docs/development.md#current-verified-release).
 The working firmware provides:
 
@@ -29,7 +29,8 @@ The working firmware provides:
   All three default to **70%** and save to NVS.
 - Compact Bootstrap dark configuration: General, Scenes and Device pages,
   served locally over WiFi or USB CDC-ECM, plus selectable USB serial/JTAG.
-  Includes SSID/status/RSSI/IP, an SSID/password editor and a web log viewer.
+  Includes a read-only WiFi/USB Network overview, modal SSID/password and USB
+  mode/address editors, plus a web log viewer.
   Connection/version and IP sit at the bottom of the desktop sidebar; standby
   screen and last input share a compact header row with the page title and active scene.
   All dropdowns use local custom controls, with search for long timezone/action lists.

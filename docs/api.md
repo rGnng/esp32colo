@@ -7,7 +7,8 @@ This reference describes the current implementation in
 [scene_service.cpp](../firmware/src/scene_service.cpp),
 [clock_service.cpp](../firmware/src/clock_service.cpp) and
 [usb_network.cpp](../firmware/src/usb_network.cpp).
-The current release is **0.6.19-scene-order** (source `18f3a79`); deployment fingerprints are in the
+The current firmware is **0.6.20-network-panel**; its HTTP API is unchanged
+from 0.6.19 (source `18f3a79`). Deployment fingerprints are in the
 [release record](development.md#current-verified-release). Bluetooth's BLE wire
 contract and Tab5 setup are documented in the [integration guide](tab5-integration.md).
 Serial companion framing remains proposed.
@@ -375,6 +376,11 @@ curl http://coloplay.local/api/usb
 curl -X POST http://coloplay.local/api/usb \
   -d 'mode=ethernet&address=172.32.29.1&prefix=30'
 ```
+
+General displays this telemetry in the combined Network overview. Its USB
+modal submits `mode`, `address` and `prefix` for Ethernet, or only `mode` for
+serial/JTAG. Opening, editing or cancelling the modal makes no configuration
+request; only Save and restart posts to this endpoint.
 
 Telemetry distinguishes configured `mode` from `active_mode`, including the
 serial/JTAG recovery override. `ready`, `connected`, `link_up`, `error`, `stage`

@@ -9,35 +9,35 @@ Bluetooth controls, pairing and the bidirectional media-state contract are in th
 
 ## Current verified release
 
-The current production firmware is **0.6.19-scene-order**, source
-[`18f3a79`](https://github.com/rGnng/esp32colo/commit/18f3a793fcc9749a0afcc0eb6c98f860f96f8659). It includes persistent scene order,
-source-key action lighting with brightness overrides, symmetric ring fills,
-manual brightness and a compact header. Ambient-light sensing/calibration/Auto
-and the Sound/Bluetooth help paragraphs are removed.
+The current production firmware is **0.6.20-network-panel**, built from Network
+panel changes on top of `27a8857`. General combines WiFi/USB status in a read-only
+Network panel, with separate modal editors and grouped settings below. The
+HTTP APIs, network settings formats, scene ordering, manual brightness, BLE and
+ring feedback logic retain the preceding implementation.
 
-Application-only OTA on **2026-11-14** redeployed the committed image after both
-builds passed. The running MD5 matched; a changed OTA slot and lower uptime
-confirmed a new boot even though the binary was identical to the prior
-candidate. Hardware was ready, boot attempts cleared, recovery off, BLE feedback
-fresh and input/audio/LED error counters zero. Saved scenes, their order, active
-selection and General settings matched the pre-update snapshot.
+Application-only OTA on **2026-11-14** matched the frozen MD5 and booted the
+alternate slot with hardware ready, cleared boot attempts, recovery off, fresh
+BLE feedback and zero input/audio/LED errors. WiFi SSID, USB mode/address/prefix/
+host address, NTP/timezone, scenes and General matched their pre-update values.
 
-The host suite and browser/device checks cover scene append/reuse/reorder and
-restart persistence, Next/Previous wrap, stable explicit targets, per-key/ring
-feedback, manual General/scene brightness, searchable HID keys, removed sensor
-UI/telemetry, and 320/375/768/1440 px layouts without JavaScript errors. The
-latest frozen application/ELF, manifest and before/after evidence are in ignored
-`backups/releases/18f3a79/`; feature checks remain under the release-specific
-folders listed in the history below. Tab5's earlier integration baseline is
-recorded alongside ColoPlay; it was unchanged during this deployment.
+Both firmware builds passed. Browser fixtures at 320/375/768/1024/1440 px cover
+network status, General columns, modal drafts/cancellation, prefix validation,
+server errors, pending-save guards, request fields, recovery/offline states and
+custom controls, including touch. Device-served checks opened and cancelled
+both editors, verified draft retention during polling, and confirmed the layout
+with no configuration POSTs or JavaScript errors. Frozen application/ELF,
+manifest and before/after evidence are in ignored `backups/network-panel/release/`.
+The unchanged backend's host suite and earlier feature qualifications remain in
+[Release history](#release-history); the preceding committed firmware deployment
+is preserved under `backups/releases/18f3a79/`.
 
 | Item | Recorded value |
 |---|---|
-| ColoPlay firmware | `0.6.19-scene-order` |
-| ColoPlay source | [`18f3a79`](https://github.com/rGnng/esp32colo/commit/18f3a793fcc9749a0afcc0eb6c98f860f96f8659) |
-| ColoPlay application bytes | 4,089,856 |
-| Running image MD5 | `e67b64991746ba5279aa23834d801985` |
-| Application SHA-256 | `6f1c46f0b76c3a843d59c78d54907a57ddb944ee145936ebff1ff623246a48a5` |
+| ColoPlay firmware | `0.6.20-network-panel` |
+| ColoPlay source | Network UI changes based on [`27a8857`](https://github.com/rGnng/esp32colo/commit/27a8857ee6a8601a1d63d5d2e62a0bb5114599dc) |
+| ColoPlay application bytes | 4,091,376 |
+| Running image MD5 | `7357e3bb5189e02b228376df5bfbf6b7` |
+| Application SHA-256 | `f28a183e71800e02d4278760ff5cb2487606c3abec6910428c04acdb4a810349` |
 | Latest verified OTA slot | `ota_app0` |
 | Tab5 BLE source | [`79c5dac`](https://github.com/rGnng/mpdtab5/commit/79c5dacd1f38a955f3ea2a8abff5b719d5d616d3) |
 | Tab5 base | `a34fa8a2c7547573f128b47061d7359f3f504a81` |
@@ -1256,3 +1256,39 @@ The device-served page passed order-control/tab-order, inline two-line header,
 footer and removed-help checks at 320/375/768/1440 px without JavaScript errors
 or settings writes. Final status confirmed the expected MD5, hardware ready,
 cleared boot guard, fresh BLE feedback and saved scene order.
+
+
+### Combined Network panel and General layout (0.6.20)
+
+Network spans the top of General and shows WiFi SSID/status/RSSI/IP alongside
+USB active mode/status/device CIDR/host IP. Recovery mode is distinguished from
+the configured mode. Each interface has an Edit button; all fields live in
+its modal. General places Lighting/Sound/Sleep and Bluetooth/Time in separate
+desktop columns, stacking on smaller screens. Existing title-aligned status,
+sidebar connection footer, custom dropdowns and removed help text remain.
+
+USB pre-fills from the latest status/settings snapshot. Polling updates only
+summary values and never resets a draft. Switching to serial/JTAG disables
+hidden address/prefix fields, excluding them from FormData and native validation;
+Ethernet sends mode/address/prefix. Save captures fields before disabling the
+form, blocks duplicate submissions/close while pending, and retains the draft
+on failure. Modal/panel errors use reserved title space. Cancel/Escape save
+nothing; WiFi cancellation still clears its password. The existing WiFi/USB
+API handlers, reboot semantics and NVS formats are unchanged. No new poll, CDN
+resource or runtime library is introduced.
+
+Both builds and browser fixture checks pass at five widths, including mouse
+and touch, current/recovery/offline status, cancel/reopen, drafts during polls,
+native prefix bounds, error geometry, pending-save guards and exact request
+fields. Live read-only browser checks verified the served layout and both
+editors with every configuration POST blocked as a test guard; none occurred.
+OTA hardware/boot/BLE checks passed, with network/NTP/scene/General settings
+preserved and zero input/audio/LED errors. Evidence: ignored
+`backups/network-panel/release/`.
+
+The follow-up browser-title change sets the main page title to **ColoPlay**.
+The first upload lost HTTP access; after the device and forward were restored,
+the retry completed. Production build, running MD5, alternate slot, served
+title, hardware ready and cleared boot guard were verified. Frozen artifacts
+and evidence are in ignored `backups/network-panel/title/`; the release
+fingerprints above identify this image.

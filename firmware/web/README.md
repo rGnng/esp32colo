@@ -42,9 +42,10 @@ markup; APIs and NVS remain the responsibility of the firmware services.
 
 The current panels include:
 
-- General: WiFi status and SSID/password dialog, USB, NTP/timezone, independent
-  manual lighting controls, scene-change sound, inactivity timeout, sound-effects gain and Bluetooth
-  enable/pair/forget/status.
+- General: combined read-only WiFi/USB Network overview with separate modal
+  editors. Beneath it, Lighting/Sound/Sleep and Bluetooth/Time use independent
+  desktop columns and stack on narrow screens. Manual brightness, scene-change
+  sound, inactivity timeout, sound gain and Bluetooth enable/pair/forget remain.
 - Scenes: Clock/Blank/Bluetooth volume/playback idle screen, icon-only selector with named tooltips,
   saved tab order with left/right move controls, scene colors/brightness overrides,
   clockwise/symmetric playback-progress and volume ring styles, ordered modifier
@@ -137,3 +138,12 @@ The header aligns page title, a two-line active-scene block and a two-line
 standby/input block on desktop; the latter moves below on narrow screens.
 Both status blocks retain fixed height. The Sound and Bluetooth explanatory
 paragraphs were removed; their controls and feedback remain.
+
+The Network panel has no inline configuration fields. WiFi/USB Edit buttons
+open native dialogs with locally drawn mode controls; current status supplies
+the initial draft without adding a poll. Polling never overwrites an open
+network editor. USB hides/disables IP/prefix fields in serial/JTAG mode, so only
+the mode is posted; Ethernet submits mode/address/prefix. Saves lock the dialog
+until completion. Errors keep the draft and use reserved title space. Cancel
+and Escape send no request; WiFi cancellation clears the password. Backend
+network APIs and NVS formats are unchanged.
