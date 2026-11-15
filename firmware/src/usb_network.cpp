@@ -1,5 +1,6 @@
 #include "device_log.h"
 #include "usb_network.h"
+#include "usb_console.h"
 #include "usb_network_settings.h"
 #include "usb_dhcp.h"
 #include <Preferences.h>
@@ -238,7 +239,7 @@ void begin(bool recoveryMode) {
   gActive = gSettings;
 #ifdef COLOPLAY_USB_CONCURRENCY_TEST
   if (gRecovery || !gTestArmed) { setStage(kSerialMode); return; }
-  gActive.mode=UsbNetworkSettings::kEthernet; // Volatile test choice, never saved.
+  gActive.mode=UsbNetworkSettings::kSerialNetwork; // Volatile test choice, never saved.
 #else
   if (gRecovery || gActive.mode == UsbNetworkSettings::kSerialJtag) { setStage(kSerialMode); return; }
 #endif
@@ -267,21 +268,27 @@ void begin(bool recoveryMode) {
   gTestHid.begin();
   USB.VID(0x303A); USB.productName("ColoPlay CDC HID JTAG experiment");
 #else
-  USB.productName("ColoPLAY USB Network");
+  if(!UsbConsole::prepareNetwork()){gError=ESP_ERR_NO_MEM;return;}
+  USB.VID(0x303A);USB.productName("ColoPlay CDC-ACM Serial + CDC-ECM Network");
+  USB.usbClass(0xEF);USB.usbSubClass(2);USB.usbProtocol(1);
 #endif
   USB.manufacturerName("ColoPLAY");
   USB.serialNumber(gSerial);
 #ifdef COLOPLAY_USB_CONCURRENCY_TEST
   USB.PID(0x4003);
 #else
-  USB.PID(0x4002);
+  USB.PID(0x4004);
 #endif
   // Development identity distinct from the fixed Serial/JTAG PID.
   USB.onEvent([](void *, esp_event_base_t, int32_t event, void *) {
     if (event == ARDUINO_USB_STOPPED_EVENT) markLink(false);
     if (event == ARDUINO_USB_RESUME_EVENT) usbd_defer_func(pumpTx, nullptr, false);
   });
-  DeviceLog::println("[usb] starting CDC-ECM; select serial/JTAG mode in web settings to restore JTAG");
+#ifdef COLOPLAY_USB_CONCURRENCY_TEST
+  DeviceLog::println("[usb] starting experimental CDC-ECM + HID coexistence attempt");
+#else
+  DeviceLog::println("[usb] starting CDC-ACM serial + CDC-ECM network; USB JTAG is unavailable in this mode");
+#endif
   setStage(kSerialStop);
 #ifndef COLOPLAY_USB_CONCURRENCY_TEST
   Serial.end();
@@ -295,7 +302,10 @@ void begin(bool recoveryMode) {
   setStage(kUsbBegin);
   gStarted = USB.begin();
   setStage(kRunning);
-  if (!gStarted) { gError = ESP_FAIL; Serial.begin(115200); }
+#ifndef COLOPLAY_USB_CONCURRENCY_TEST
+  UsbConsole::useNetwork(gStarted);
+#endif
+  if (!gStarted) { gError = ESP_FAIL; coloplay_usb_prepare_serial_phy();Serial.begin(115200); }
 }
 
 bool receiveFrame(const uint8_t *bytes, uint16_t length) {
@@ -327,13 +337,19 @@ String statusJson() {
 #endif
   String json;
   json.reserve(700);
-  json += "{\"mode\":\"" + String(gSettings.mode == UsbNetworkSettings::kEthernet ? "ethernet" : "serial_jtag");
-  json += "\",\"active_mode\":\"" + String(activeOtg ? "ethernet" : "serial_jtag");
+  json += "{\"mode\":\"" + String(UsbNetworkSettings::modeName(gSettings.mode));
+  json += "\",\"active_mode\":\"" + String(activeOtg ? "serial_network" : "serial_jtag");
   json += "\",\"address\":\"" + address(gSettings.address);
   json += "\",\"prefix\":" + String(gSettings.prefix);
   json += ",\"dhcp_address\":\"" + address(gSettings.lease);
   json += "\",\"gateway\":null,\"dns\":null,\"dhcp_pool_size\":1";
-  json += ",\"protocol\":\"CDC-ECM\",\"stored\":" + String(gStored ? "true" : "false");
+#ifdef COLOPLAY_USB_CONCURRENCY_TEST
+  json += ",\"protocol\":\""+String(activeOtg?"CDC-ECM+HID-test":"CDC-ACM")+"\",\"stored\":" + String(gStored ? "true" : "false");
+#else
+  json += ",\"protocol\":\""+String(activeOtg?"CDC-ACM+CDC-ECM":"CDC-ACM")+"\",\"stored\":" + String(gStored ? "true" : "false");
+#endif
+  json += ",\"serial_connected\":"+String(UsbConsole::connected()?"true":"false");
+  json += ",\"serial_tx_queued\":"+String(UsbConsole::queued())+",\"serial_tx_dropped\":"+String(UsbConsole::dropped());
   json += ",\"ready\":" + String(activeOtg && gReady.load() ? "true" : "false");
   json += ",\"connected\":" + String(activeOtg && tud_connected() ? "true" : "false");
   json += ",\"link_up\":" + String(gLink.load() ? "true" : "false");
@@ -413,8 +429,7 @@ bool configure(WebServer &server, String &error) {
   auto candidate = gSettings;
   if (server.hasArg("mode")) {
     const String mode = server.arg("mode");
-    if (mode != "ethernet" && mode != "serial_jtag") { error = "invalid USB mode"; return false; }
-    candidate.mode = mode == "ethernet" ? UsbNetworkSettings::kEthernet : UsbNetworkSettings::kSerialJtag;
+    if(!UsbNetworkSettings::parseMode(mode.c_str(),candidate.mode)){error="mode must be serial_jtag or serial_network";return false;}
   }
   if ((server.hasArg("address") && !UsbNetworkSettings::parse(server.arg("address").c_str(), candidate.address)) ||
       (server.hasArg("dhcp_address") && !UsbNetworkSettings::parse(server.arg("dhcp_address").c_str(), candidate.lease))) {

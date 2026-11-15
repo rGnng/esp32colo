@@ -28,6 +28,7 @@ def build_assets():
                            ('APP_CSS','app.css','text/css; charset=utf-8'),
                            ('DROPDOWNS_JS','dropdowns.js','application/javascript; charset=utf-8'),
                            ('APP_JS','app.js','application/javascript; charset=utf-8'),
+                           ('PLAYBACK_JS','playback.js','application/javascript; charset=utf-8'),
                            ('SCENE_ICONS','scene-icons.svg','image/svg+xml'),
                            ('PROJECT_ICON','coloplay.svg','image/svg+xml')]:
         raw=(WEB/file).read_bytes();packed=gzip.compress(raw,compresslevel=9,mtime=0)

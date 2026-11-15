@@ -13,7 +13,7 @@ development. The build target and default hostname remain `coloplay`.
 
 ## Current baseline
 
-Current firmware: **`0.6.26-volume-bar`**. Tab5 owns the selected volume scale:
+Current firmware: **`0.6.30-playback-states`**. Tab5 owns the selected volume scale:
 **1/16 Squared Curve**, **1/64 Squared Curve** (default), **2% Integer**, or
 **5% Integer**. ColoPlay synchronizes it over BLE and predicts immediate
 screen/ring response. Small curved hardware readback differences map back to
@@ -22,7 +22,13 @@ The [macOS volume findings](docs/tab5-integration.md#observed-macos-volume-scale
 explain raw mixer quantization and the squared control profiles.
 The volume screen shows a speaker icon and bar; command outcomes
 stay in Device diagnostics and the web log. General combines WiFi and USB
-status in one Network panel, with separate modal editors and grouped controls.
+status in one USB & Network panel, with separate modal editors and grouped controls.
+The dedicated [Bluetooth playback page](docs/firmware.md#bluetooth-playback)
+configures separate Playing, Paused and Stopped/Disconnected light plans. Ring
+and Buttons independently follow the scene or use custom colors, fills and
+brightness. Screen elements, text scrolling and screen state fallbacks are
+configured separately. Its settings
+save independently to NVS; action feedback and sleep retain priority.
 Saved scene order, manual brightness, symmetric ring fills, source-key
 lighting and searchable HID keys remain available.
 Both devices use application-only OTA. Source/build identity, validation results
@@ -34,8 +40,10 @@ The working firmware provides:
   Web screen capture and automatic preview refresh are disabled.
 - Rainbow or static-color LEDs; separate screen, ring and key brightness controls.
   All three default to **70%** and save to NVS.
-- Compact Bootstrap dark configuration: General, Scenes and Device pages,
-  served locally over WiFi or USB CDC-ECM, plus selectable USB serial/JTAG.
+- Compact Bootstrap dark configuration: General, Scenes, Bluetooth playback and Device pages,
+  served locally over WiFi or USB CDC-ECM. USB offers **CDC-ACM Serial + USB
+  JTAG** (default) or **CDC-ACM Serial + CDC-ECM Network**, with no network-only
+  mode. The active serial console provides commands and application logs.
   Includes a read-only WiFi/USB Network overview, modal SSID/password and USB
   mode/address editors, plus a web log viewer.
   Connection/version and IP sit at the bottom of the desktop sidebar; standby

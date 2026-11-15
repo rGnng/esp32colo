@@ -164,6 +164,7 @@ void begin(Handler handler) {
   gStored=gOpen&&gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);
 }
 uint32_t epoch() { return gEpoch; }
+uint8_t standbyScreen(){return gSettings.scenes[gSettings.active].screen;}
 uint8_t activeScene(){return gSettings.active;}
 uint8_t icon(){return gSettings.scenes[gSettings.active].icon;}
 const char *name(){return gSettings.scenes[gSettings.active].name;}

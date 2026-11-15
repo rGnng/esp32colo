@@ -48,7 +48,8 @@ only the application image belongs in the update workflows below.
 
 ## Normal updates
 
-HTTP OTA is available on the same web server through WiFi or USB Ethernet:
+HTTP OTA is available on the same web server through WiFi or CDC-ECM in
+**CDC-ACM Serial + CDC-ECM Network** mode:
 
 ```bash
 ./scripts/ota_upload.sh http://coloplay.local

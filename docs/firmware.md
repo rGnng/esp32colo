@@ -1,7 +1,7 @@
 # Desktop gadget guide
 
-Current baseline: **0.6.26-volume-bar**. The gadget is configured through the **General**,
-**Scenes** and **Device** pages. Desktop uses a navigation rail; mobile uses
+Current source baseline: **0.6.30-playback-states**. The gadget is configured
+through the **General**, **Scenes**, **Bluetooth playback** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
 buttons are 14 px, with larger headings and log text. [API](api.md), [development](development.md), and
 [build/update/recovery](flash.md) instructions are maintained separately.
@@ -23,11 +23,11 @@ refreshes every two seconds while the page is visible and pauses in hidden tabs.
 
 ## General
 
-The Network overview spans the top of the page. Below it, desktop groups
+The USB & Network overview spans the top of the page. Below it, desktop groups
 Lighting, Sound and Sleep in the left column, with Bluetooth and Time in the
 right column. Narrow screens stack the groups.
 
-### Network
+### USB & Network
 
 WiFi and USB share one read-only panel. Each interface has an **Edit** button
 that opens its own modal. Network save/restart and error notifications stay in
@@ -45,25 +45,42 @@ in [Flashing](flash.md#recovery).
 
 <a id="usb-networking-and-serialjtag"></a>
 
-#### USB-CDC Network
+<a id="usb-cdc-network"></a>
 
-The overview shows active mode, status, device IP/prefix and computer IP.
-Serial/JTAG shows no active network addresses; its tooltip retains the configured
-mode when a recovery override is active.
+#### USB modes
 
-Open **Network → USB → Edit** to choose CDC-ECM network (macOS/Linux) or
-serial/JTAG. Configure device IP and
-prefix (1–30); the firmware chooses a different usable host in that subnet for
-the single DHCP client. No gateway or DNS is advertised. The initial network is
-172.32.29.1/30 with peer 172.32.29.2. **Save and restart** applies the changes.
-Address/prefix fields appear only for CDC-ECM; selecting serial/JTAG saves only
-the mode and keeps the stored network values. Reconnect/renew
-the computer's USB interface when changing its subnet.
+The overview shows the active mode, USB network status, CDC-ACM serial status,
+USB JTAG availability, device IP/prefix and computer IP. **USB & Network → USB
+→ Edit** offers exactly two modes:
 
-Existing custom addresses are preserved. An unchanged previous default of
-172.32.29.21/24 with peer 172.32.29.30 migrates to the new /30 default.
-Ethernet and fixed serial/JTAG share the USB PHY and are selectable modes;
-application recovery always retains serial/JTAG and WiFi/OTA. No eFuse changes.
+| Mode | Serial console | USB network | USB JTAG |
+|---|---|---|---|
+| **CDC-ACM Serial + USB JTAG** (default) | Hardware CDC-ACM | None | Available |
+| **CDC-ACM Serial + CDC-ECM Network** | Software CDC-ACM | CDC-ECM | Unavailable |
+
+WiFi stays available in either mode. CDC-ECM is Ethernet over USB, not RNDIS.
+The composite mode uses development VID:PID `303a:4004`, a stable
+`coloplay-<MAC>` USB serial identifier, and separate ACM/ECM interfaces. Serial
+commands and application logs use the active ACM port. Serial output is queued
+and bounded so an unread port cannot block playback or OTA; overflow counters
+are available in USB telemetry. Opening the software ACM port does not trigger
+an automatic reboot. The fixed Serial/JTAG USB identity is supplied by hardware.
+macOS assigns `/dev/tty.usbmodem...` and `/dev/cu.usbmodem...` paths; applications
+should discover by USB identity instead of assuming a port suffix stays fixed.
+
+Configure device IP and prefix (1–30) in the network mode. The firmware chooses
+a different usable address for its single DHCP client, with no gateway or DNS.
+Initial addresses are 172.32.29.1/30 and computer 172.32.29.2. **Save and restart**
+applies changes. Selecting Serial + JTAG hides address fields and preserves the
+saved addresses. Reconnect/renew the USB network interface after subnet changes.
+
+The existing 12-byte NVS record is preserved. Saved Serial/JTAG choices stay
+selected; the previous network-only mode now gains ACM with its addresses kept.
+The exact older default of 172.32.29.21/24 and peer 172.32.29.30 still migrates to
+the /30 default. Application recovery retains Serial/JTAG and WiFi/OTA, with no
+eFuse changes. ROM recovery remains REC + center knob while reconnecting power.
+Host enumeration, USB-network HTTP and serial round trips require checks on the
+computer physically attached to the USB cable; WiFi telemetry alone is not proof.
 
 ### NTP servers
 
@@ -120,6 +137,55 @@ saved brightness selections. WiFi, USB, OTA and input handling remain
 available. **Toggle screen / LEDs** in Device can also wake it. A scene whose
 idle screen is Blank still keeps its display off after waking; its LEDs resume.
 
+## Bluetooth playback
+
+This page defines shared playback appearance. It applies when the active scene
+uses a Bluetooth playback/volume idle screen or playback-progress ring, and
+while a Bluetooth screen action is visible. Scenes keep their idle-screen,
+color and brightness choices. Pairing remains in General.
+
+**Lights** has three tabs: **Playing**, **Paused** and **Stopped**. Stopped
+includes connected playback state 0, disconnects, stale feedback and unknown
+playback state. Ring and Buttons each choose **Use Scene** or **Custom** in every
+tab. Use Scene follows that channel's resolved scene color and brightness as
+ordinary lighting; it does not re-enter the scene's playback-progress setting.
+
+Custom Ring offers Playback progress, Volume, Lighting or Off; Stopped offers
+Lighting or Off. Progress freezes while paused. Each plan has independent
+progress/volume-feedback fill styles, filled and unfilled colors, unfilled
+brightness and ring brightness (Use Scene or Override). Custom Buttons offers
+Static color, Rainbow or Off, with its own color and brightness. Controls appear
+only when relevant to the selected source/display. The three plans replace the
+old shared appearance and paused/dim/stopped/disconnected light modifiers.
+
+Switching tabs retains all unsaved edits. **Save lighting** stores all three
+state plans together; Screen has its own save and draft. Notifications stay in
+the title. Action cues override their own target LEDs temporarily, and sleep
+turns off all LEDs and the screen.
+
+The version-3, 208-byte NVS record migrates version 1/2 profiles. Playing and
+Paused retain their previous settings. Old Dim converts to per-channel
+brightness overrides using the current scene levels. Stopped preferences
+initialize the combined Stopped/Disconnected plan: a former empty progress
+ring becomes its background lighting (or Off), and Volume becomes ordinary
+Lighting. Legacy button color inheritance with a brightness override resolves
+the current scene color/mode when creating Custom. Screen preferences persist.
+
+**Screen** has switches for the status icon, title, artist and progress bar.
+Time can show Elapsed / Total, Remaining, or Off. Long titles/artists use
+Ellipsis or Scrolling (24 pixels/second, with a one-second pause at each end).
+Japanese text retains the embedded 16 px font and stays centered; a single
+metadata line centers vertically. Paused/stopped screens can keep playback,
+show Clock or go Blank. Disconnected playback can show the connecting icon,
+Clock or Blank. Blank turns the backlight off. These state choices apply to the
+playback screen; a temporary volume screen keeps its icon-and-bar behavior.
+
+Settings use the separate `bt-playback` NVS namespace. New state plans initialize
+Playing/Paused with progress lighting and scene-following buttons, and Stopped
+with both channels following the scene. Existing records migrate as described
+above. The scene editor has no fill-style menu; legacy scene bytes remain
+intact. Scene-change overlays keep priority over playback screens.
+
 ## Scenes
 
 **Default** always exists, cannot be deleted or renamed, and its bindings are
@@ -131,10 +197,10 @@ saved and restored at boot. Deleting the active scene returns to Default;
 saved scene-switch actions targeting a deleted scene are retargeted to Default.
 A scene switch clears pending gestures and temporary effects and wakes the screen.
 It shows the scene icon and name for about 1.6 seconds, then returns to the saved
-Clock or Blank idle screen.
+selected idle screen.
 
 The scene settings panel has a **Scene icon** picker with 32 bundled Bootstrap
-icons (icon-only button; hover for its name), **Idle screen**, **Ring display**, **Ring fill style**, **Ring color**,
+icons (icon-only button; hover for its name), **Idle screen**, **Ring display**, **Ring color**,
 **Button color**, and brightness controls
 for screen, ring and buttons, followed by the key binding table. Each LED group independently uses
 **Static color** with its own picker, **Rainbow**, or **Use General**. Click
@@ -409,18 +475,16 @@ combination behavior. A modifier must go down first; press both together to
 match only an Any order binding. Hold the modifier and tap another member to
 repeat without releasing it. Reversed pairs can be configured independently.
 
-**Ring display** is a scene setting beside the screen/color choices. Select
-Bluetooth playback progress to fill using track elapsed/duration. **Ring fill
-style** chooses **Clockwise** (the existing default) or **Bottom to top
-(symmetric)**. The latter starts at the bottom, fills both sides equally and
-reaches the top at 100%, with partial LED brightness between steps. This style
-also applies to knob percentage feedback, including Bluetooth volume.
-It is saved per scene. Action light effects take priority temporarily. Pause holds the fill, Stop and
-unavailable data clear it. This does not change the button LEDs or brightness.
+**Ring display** remains a scene setting beside the screen/color choices.
+Select Bluetooth playback progress to opt into the playback ring. Fill styles,
+state behavior and shared appearance are configured in
+[Bluetooth playback](#bluetooth-playback). Bottom to top fills both sides from
+the bottom to the top, with partial LED brightness between steps. Action light
+effects take priority temporarily and return to playback lighting on expiry.
 The Bluetooth playback screen has a compact playback-state icon at the top and centered
 16 px title/artist lines, with no emoji/boxes. Japanese metadata is supported by
 an embedded Noto Sans JP bitmap font. A slim progress bar and time are below;
-the LED ring can also show progress. Unavailable feedback uses only the local
+the LED ring can also show progress. By default unavailable feedback uses the local
 `andrsrxn:bluetooth-connecting` icon, without connection text.
 
 **General → Sound → Sound effects volume** controls generated tones, including

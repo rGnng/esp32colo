@@ -1,6 +1,6 @@
 # Embedded web configuration
 
-Editable sources are `index.html`, `app.css`, `app.js`, `dropdowns.js` and
+Editable sources are `index.html`, `app.css`, `app.js`, `playback.js`, `dropdowns.js` and
 `update.html`.
 `coloplay.svg` is the project icon, sidebar logo and favicon on both pages.
 It is bundled as a local, content-hashed SVG asset with the firmware.
@@ -36,7 +36,7 @@ Only forms, buttons, navs, tables and their required Bootstrap foundation are
 included. Layout, readable typography and density are defined in app.css.
 Inputs/table text use 16 px; labels/buttons/log text use 14 px. Narrow screens
 stack scene field labels above their controls to preserve room for the text. The configuration uses
-General, Scenes and Device panels, a desktop navigation rail and mobile tabs.
+General, Scenes, Bluetooth playback and Device panels, a desktop navigation rail and mobile tabs.
 Add new top-level pages to app.js's `pages` array and matching navigation/panel
 markup; APIs and NVS remain the responsibility of the firmware services.
 
@@ -121,11 +121,16 @@ in the desktop header. Connection/version and IP are in the desktop sidebar
 footer, hidden in the compact mobile layout.
 The binding-table heading has no live status text.
 
-Scene Ring fill style selects clockwise or symmetric bottom-to-top coverage
-for playback progress and knob percentage feedback, including Bluetooth volume.
-The three behavior controls share a desktop row; ring/button colors retain
-equal widths below. Narrow layouts use two columns or stack. The setting is
-serialized as ring_style and stays separate from ring_display and light color.
+Bluetooth playback has independent Lights and Screen panels. `playback.js`
+loads `/api/playback`, keeps separate panel drafts, and submits partial updates
+only on Save. Notifications occupy fixed title-side space. All its selects use
+`Dropdowns.enhance`; checkbox labels are clickable. Ring progress and Bluetooth
+volume have separate fill choices here; the scene-level fill menu is removed.
+Scene saves omit `ring_style`, preserving that legacy field. First profile
+initialization copies the active scene's existing style into both new settings.
+The new local JavaScript asset is gzip-packed and served from flash like the
+existing assets. Playback appearance uses a separate versioned NVS record and
+has no companion-app or Tab5 dependency.
 
 Ambient-light sensing, calibration and Auto checkboxes are removed from General
 and scenes. Polling needs no light/Auto fields. Manual percentages, per-scene
@@ -139,7 +144,7 @@ standby/input block on desktop; the latter moves below on narrow screens.
 Both status blocks retain fixed height. The Sound and Bluetooth explanatory
 paragraphs were removed; their controls and feedback remain.
 
-The Network panel has no inline configuration fields. WiFi/USB Edit buttons
+The USB & Network panel has no inline configuration fields. WiFi/USB Edit buttons
 open native dialogs with locally drawn mode controls; current status supplies
 the initial draft without adding a poll. Polling never overwrites an open
 network editor. USB hides/disables IP/prefix fields in serial/JTAG mode, so only
@@ -147,3 +152,19 @@ the mode is posted; Ethernet submits mode/address/prefix. Saves lock the dialog
 until completion. Errors keep the draft and use reserved title space. Cancel
 and Escape send no request; WiFi cancellation clears the password. Backend
 network APIs and NVS formats are unchanged.
+
+USB has exactly two custom-dropdown choices: CDC-ACM Serial + USB JTAG (default)
+and CDC-ACM Serial + CDC-ECM Network. The overview shows active serial and JTAG
+status alongside USB-network addresses. The network mode API value is
+`serial_network`; network-only `ethernet` and RNDIS are not choices. Address
+fields appear only in the network mode, and are omitted when saving Serial +
+JTAG so existing custom addresses survive. The USB composite identity is
+`303a:4004`; software ACM logs/commands share the bounded console transport.
+
+Playback Lights now uses Playing/Paused/Stopped tabs. Each state's Ring and
+Buttons have separate scene/custom sources and retain hidden custom values.
+All 42 state-prefixed fields save atomically with one Save lighting operation;
+state navigation retains drafts and implements arrow/Home/End keyboard focus.
+Screen saves stay independent. The API announces schema 3; stale shared lighting
+fields are rejected with a refresh message. The 208-byte NVS record migrates
+legacy versions 1/2, using current scene levels to translate old Dim modifiers.

@@ -4,14 +4,21 @@
 #include <initializer_list>
 
 namespace UsbNetworkSettings {
-enum Mode : uint8_t { kEthernet = 0, kSerialJtag = 1 };
+enum Mode : uint8_t { kSerialNetwork = 0, kSerialJtag = 1 };
 struct Stored {
   uint16_t version = 1;
-  uint8_t mode = kEthernet, prefix = 30;
+  uint8_t mode = kSerialJtag, prefix = 30;
   uint8_t address[4] = {172, 32, 29, 1};
   uint8_t lease[4] = {172, 32, 29, 2};
 };
 static_assert(sizeof(Stored) == 12, "USB settings storage layout changed");
+inline const char *modeName(uint8_t mode){return mode==kSerialNetwork?"serial_network":"serial_jtag";}
+inline bool parseMode(const char *text,uint8_t &mode){
+  if(!std::strcmp(text,"serial_network"))mode=kSerialNetwork;
+  else if(!std::strcmp(text,"serial_jtag"))mode=kSerialJtag;
+  else return false;
+  return true;
+}
 inline uint32_t number(const uint8_t ip[4]) {
   return uint32_t(ip[0]) << 24 | uint32_t(ip[1]) << 16 | uint32_t(ip[2]) << 8 | ip[3];
 }

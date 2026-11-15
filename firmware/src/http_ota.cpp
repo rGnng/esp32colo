@@ -1,3 +1,4 @@
+#include "usb_console.h"
 #include "http_ota.h"
 #include "hardware_demo.h"
 #include "web_ui.h"
@@ -20,7 +21,7 @@ void fail(const String &message) {
   if (Update.isRunning()) Update.abort();
   gBusy = false;
   HardwareDemo::pause(false);
-  Serial.printf("[http-ota] %s\n", message.c_str());
+  UsbConsole::stream().printf("[http-ota] %s\n", message.c_str());
 }
 
 bool authorize(WebServer &server) {
@@ -51,7 +52,7 @@ void setup(WebServer &server, const char *password) {
     if (ok && !Update.end(true)) { fail(Update.errorString()); ok = false; }
     gSawFile = false;
     if (ok) {
-      Serial.printf("[http-ota] verified %u bytes; application selected for next boot\n", gBytes);
+      UsbConsole::stream().printf("[http-ota] verified %u bytes; application selected for next boot\n", gBytes);
       server.send(200, "application/json", "{\"updated\":true,\"rebooting\":true}");
       gRestartAt = millis() + 1000;
     } else {
@@ -71,7 +72,7 @@ void setup(WebServer &server, const char *password) {
       gHeaderBytes = gBytes = 0;
       gError = "";
       if (!gAuthorized) return;
-      Serial.println("[http-ota] receiving application image");
+      UsbConsole::stream().println("[http-ota] receiving application image");
     }
     if (gRestartAt || !gAuthorized || !gError.isEmpty()) return;
     if (upload.status == UPLOAD_FILE_WRITE) {

@@ -1,6 +1,6 @@
 # Bluetooth controls and Tab5 feedback
 
-Current ColoPlay firmware: **0.6.26-volume-bar**; its source/build identity
+Current ColoPlay source: **0.6.30-playback-states**; the last verified OTA
 is in the [release record](development.md#current-verified-release).
 Volume-scale support follows Tab5 commit
 [`80acc5d`](https://github.com/rGnng/mpdtab5/commit/80acc5de9439fda8e1da57e541adb66d2f1cc20a), using matching
@@ -214,9 +214,10 @@ settings are skipped by screen navigation, as in the existing Tab5 UI.
 
 Idle **Bluetooth playback** uses a small drawn playback-state icon at the
 top, without Playing/Paused/Stopped labels, with 16 px title/artist lines surrounding the vertical center. Long text is
-measured and ellipsized at UTF-8 boundaries. A slim LCD progress bar/time sits
+measured and ellipsized at UTF-8 boundaries, or scrolls when enabled on the
+[Bluetooth playback page](firmware.md#bluetooth-playback). A slim LCD progress bar/time sits
 below; the configured LED-ring progress remains independent. There are no emoji
-or decorative boxes. When feedback is unavailable, both Bluetooth screens show
+or decorative boxes. By default, when feedback is unavailable, both Bluetooth screens show
 only the locally bundled `andrsrxn:bluetooth-connecting` icon, without connection
 text. Glyph data stays in flash; no whole font is loaded into RAM.
 
@@ -226,14 +227,19 @@ Playing uses a shared smoothed local clock between position packets; repeated
 heartbeats/ACKs do not reset it. Pause freezes, Stop clears,
 and unknown/stale state clears the progress fill. Partial pixels smooth the nine
 LED segments. The progress indicator is independent of the LCD idle screen.
-Scene **Ring fill style** offers **Clockwise** or **Bottom to top (symmetric)**.
-Symmetric fill lights both lower sides together, rising to the top at 100%.
-It also controls knob proportional feedback for Bluetooth volume, using the
-same partial-pixel renderer. Existing scenes retain Clockwise until changed.
-Knob action light effects temporarily take priority over ring progress, then
-return to progress. Button actions affect only their own LEDs; combinations
-affect all participating buttons. Each target restores its scene lighting after
-the configured duration. Sleep turns both groups off.
+**Bluetooth playback → Lights** offers independent state/channel plans and
+**Progress fill** / **Volume feedback fill** choices: Clockwise or Bottom to top. Symmetric fill lights both
+lower sides together, rising to the top at 100%, using the same partial-pixel
+renderer. The scene-level fill menu is removed; first initialization copies the
+active scene's legacy style into both shared settings without changing scenes.
+The page also controls ring/button colors and brightness, unfilled dimming and
+Playing, Paused and combined Stopped/Disconnected behavior. **Screen** controls visible elements,
+long-text handling and state-specific Clock/Blank/connecting fallbacks.
+Knob action light effects temporarily take priority over playback lighting.
+Button actions affect only their own LEDs; combinations affect all participating
+buttons. Each target returns to playback lighting after the configured duration.
+Sleep turns both groups and the screen off. The BLE wire format and Tab5 settings
+are unchanged by this local appearance feature.
 
 General **Sound effects volume** is saved independently of brightness and remote
 MPD volume. It scales local generated tones, including scene-change cues; 0% is

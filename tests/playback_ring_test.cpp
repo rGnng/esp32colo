@@ -6,6 +6,9 @@ int main(){
  assert(progress(true,1,11000,100000)==110);
  assert(progress(true,2,10000,100000)==100);
  assert(progress(true,0,10000,100000)==0);
+ assert(progress(true,0,0,0,false)==0);
+ assert(progress(true,1,0,100000,false)==-1);
+ assert(progress(true,0,0,0)==0); // Stopped with no track is an empty fill, not disconnected.
  assert(progress(false,1,10000,100000)==-1);
  assert(progress(true,255,10000,100000)==-1);
  assert(progress(true,1,10000,0)==-1);

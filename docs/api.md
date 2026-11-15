@@ -4,11 +4,13 @@ This reference describes the current implementation in
 [main.cpp](../firmware/src/main.cpp),
 [hardware_demo.cpp](../firmware/src/hardware_demo.cpp),
 [general_service.cpp](../firmware/src/general_service.cpp),
+[playback_service.cpp](../firmware/src/playback_service.cpp),
 [scene_service.cpp](../firmware/src/scene_service.cpp),
 [clock_service.cpp](../firmware/src/clock_service.cpp) and
 [usb_network.cpp](../firmware/src/usb_network.cpp).
-The current firmware is **0.6.20-network-panel**; its HTTP API is unchanged
-from 0.6.19 (source `18f3a79`). Deployment fingerprints are in the
+The current source is **0.6.30-playback-states**, including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
+filled/unfilled ring colors.
+Deployment fingerprints for the last verified OTA are in the
 [release record](development.md#current-verified-release). Bluetooth's BLE wire
 contract and Tab5 setup are documented in the [integration guide](tab5-integration.md).
 Serial companion framing remains proposed.
@@ -26,6 +28,8 @@ not JSON request bodies. Successful configuration responses are JSON.
 | `GET /api/log` | Bounded application log; optional `after` byte cursor | None; JSON, no-store |
 | `GET /api/general` | General sound and inactivity-sleep preferences | None; JSON |
 | `POST /api/general` | Partially update General sound/sleep preferences | None; JSON |
+| `GET /api/playback` | Shared Bluetooth playback appearance | None; JSON |
+| `POST /api/playback` | Partially update playback light/screen appearance | None; JSON |
 | `GET /api/bluetooth` | Bluetooth configuration, pairing/link and remote state | None; JSON |
 | `POST /api/bluetooth` | Enable/disable, pair/stop or forget | None; JSON |
 | `GET /api/scenes` | Saved scene catalog, bindings, limits and state | None; JSON |
@@ -361,26 +365,40 @@ the physical face only renders hours/minutes and the sync-dependent colon.
 
 ## USB settings
 
-`POST /api/usb` accepts one or more of `mode` (`ethernet` or `serial_jtag`),
+`POST /api/usb` accepts one or more of `mode` (`serial_jtag` or `serial_network`),
 `address`, `prefix` and `dhcp_address`. Addresses must be distinct usable IPv4
 hosts in the same subnet, with prefix 1–30. Saving commits one NVS record and
 restarts the device. If device IP/prefix changes without an explicit host
 address, the DHCP peer is computed from the new subnet. Initial settings are
 172.32.29.1/30, peer 172.32.29.2. Only the exact previous defaults migrate;
 custom networks are preserved. Defaults and connection instructions are in the
-[firmware guide](firmware.md#usb-cdc-network).
+[firmware guide](firmware.md#usb-modes).
 
 ```bash
 curl http://coloplay.local/api/usb
 # Saves settings and restarts:
 curl -X POST http://coloplay.local/api/usb \
-  -d 'mode=ethernet&address=172.32.29.1&prefix=30'
+  -d 'mode=serial_network&address=172.32.29.1&prefix=30'
 ```
 
-General displays this telemetry in the combined Network overview. Its USB
-modal submits `mode`, `address` and `prefix` for Ethernet, or only `mode` for
+General displays this telemetry in the combined USB & Network overview. Its USB
+modal submits `mode`, `address` and `prefix` for CDC-ACM + CDC-ECM, or only `mode` for
 serial/JTAG. Opening, editing or cancelling the modal makes no configuration
 request; only Save and restart posts to this endpoint.
+
+The default mode is `serial_jtag` (CDC-ACM serial plus hardware USB JTAG).
+`serial_network` supplies CDC-ACM serial and CDC-ECM networking together; it
+cannot supply built-in USB JTAG on the shared internal PHY. There is no
+network-only or RNDIS choice. Existing on-flash mode 0 becomes `serial_network`
+and mode 1 remains `serial_jtag`, with the same version-1 12-byte record.
+Old API value `ethernet` is rejected; use `serial_network`.
+
+`protocol` reports `CDC-ACM` or `CDC-ACM+CDC-ECM` according to the active mode.
+`serial_connected` reports host console connection, `serial_tx_queued` counts
+bytes waiting in the bounded 8192-byte console queue, and `serial_tx_dropped`
+counts overflow bytes. These counters are volatile. Disconnected output is not
+queued; the web log remains available. `jtag_available` describes the selected
+controller capability, not a host-verified JTAG scan.
 
 Telemetry distinguishes configured `mode` from `active_mode`, including the
 serial/JTAG recovery override. `ready`, `connected`, `link_up`, `error`, `stage`
@@ -497,6 +515,72 @@ layout or existing enum values. Older firmware cannot read new version 5
 settings: back up scene JSON before a downgrade and restore compatible settings
 explicitly. Disabling Bluetooth on 0.6.1 preserves the migrated scenes.
 
+## Bluetooth playback appearance (0.6.30)
+
+`GET /api/playback` returns `schema: 3`, `stored` and the fields below.
+`POST /api/playback` accepts a nonempty subset as form fields, validates the
+whole candidate before writing and returns the complete profile. Unknown
+fields, invalid choices/ranges or failed NVS writes return 400 without applying
+a partial update. Unchanged saves avoid extra writes. Legacy shared light
+fields return a refresh message so stale web pages cannot replace state plans.
+
+Screen fields retain their names and behavior:
+
+| Fields | Values / initial choice |
+|---|---|
+| `show_status`, `show_title`, `show_artist`, `show_progress` | POST 0/1; JSON boolean; initially true |
+| `time_display` | `elapsed_total` (initial), `remaining`, `off` |
+| `long_text` | `ellipsis` (initial), `scroll` |
+| `paused_screen`, `stopped_screen` | `playback` (initial), `clock`, `blank` |
+| `disconnected_screen` | `connecting` (initial), `clock`, `blank` |
+
+Every light field uses a state prefix: `playing_`, `paused_` or `stopped_`.
+For example, `playing_ring_source=custom` and `paused_keys_source=scene` are
+independent settings. The stopped plan also handles unavailable/stale feedback.
+
+| Suffix after the state prefix | Values |
+|---|---|
+| `ring_source`, `keys_source` | `scene`, `custom` |
+| `ring_display` | `progress`, `volume`, `lighting`, `off`; Stopped allows only `lighting`/`off` |
+| `ring_style`, `volume_ring_style` | `clockwise`, `bottom_to_top` |
+| `ring_color_mode` | `scene`, `static`, `rainbow` |
+| `ring_color`, `keys_color`, `unfilled_color` | `#RRGGBB` |
+| `unfilled_color_mode` | `filled`, `static` |
+| `unfilled_brightness` | Integer 0–100 |
+| `ring_brightness`, `keys_brightness` | -1 for Use Scene, or integer 0–100 |
+| `keys_mode` | `static`, `rainbow`, `off` |
+
+Use Scene resolves normal scene lighting and brightness independently for each
+channel. Custom plans preserve hidden values while following the scene or
+turning off. Playing/Paused initially use a Custom progress ring and scene
+buttons; Stopped initially follows the scene for both channels. Defaults for
+colors are white, unfilled color follows filled with 0% brightness, levels
+inherit, and styles copy the active scene's style. Volume feedback uses the
+current state's `volume_ring_style` even when an action temporarily overlays
+the base lighting. Action effects and sleep keep priority.
+
+One version-3 208-byte blob under `bt-playback/settings` stores all plans and
+screen options. V1 (96 bytes) and V2 (104 bytes) migrate. Legacy paused Dim is
+converted to brightness overrides using resolved current scene levels. Existing
+Stopped choices initialize the combined Stopped/Disconnected plan. A previous
+empty-progress background becomes Lighting/Off; a Stopped volume display
+becomes Lighting. Screen settings persist. A failed migration write retains the
+migrated values in RAM with `stored=false` and retries on save/boot. General,
+network, BLE and scene records do not change. The old scene `ring_style` byte
+remains for compatibility but is omitted from scene editor saves.
+
+```bash
+curl http://coloplay.local/api/playback
+curl -X POST http://coloplay.local/api/playback \
+  -d 'playing_ring_source=custom' -d 'playing_ring_display=progress' \
+  -d 'playing_ring_color_mode=static' -d 'playing_ring_color=#ff0000' \
+  -d 'playing_unfilled_color_mode=static' -d 'playing_unfilled_color=#0000ff' \
+  -d 'playing_unfilled_brightness=20'
+curl -X POST http://coloplay.local/api/playback \
+  -d 'paused_ring_source=scene' -d 'paused_keys_source=custom' \
+  -d 'paused_keys_mode=off' -d 'stopped_ring_source=scene'
+```
+
 ## Ordered modifiers, cue volume and playback ring (0.6.1)
 
 A binding input can express modifier order with `>`: `key4>key2` requires Button
@@ -514,6 +598,8 @@ default is `clockwise`. `bottom_to_top` fills symmetric LED pairs from bottom
 to top and applies to both playback progress and knob proportional effects
 (including Bluetooth volume); it leaves button effects unchanged. Style uses
 one formerly reserved scene byte, preserving schema 7 and its 3304-byte layout.
+Since 0.6.27, the scene menu is removed and Bluetooth progress/volume fill uses
+the independent `/api/playback` settings above; the legacy scene field remains.
 Bluetooth progress uses fresh playback elapsed/duration,
 with paused/stopped/unavailable handling and action-effect priority. Diagnostic
 `hardware.leds.progress_permille` reports 0–1000 or -1 when unavailable.

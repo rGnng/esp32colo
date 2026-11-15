@@ -3,7 +3,7 @@
 Current instructions are consolidated in the [firmware guide](firmware.md):
 
 - [Plain clock and NTP configuration](firmware.md#standby-and-screen-behavior)
-- [USB Ethernet and serial/JTAG](firmware.md#usb-cdc-network)
+- [CDC-ACM serial, CDC-ECM networking and USB JTAG](firmware.md#usb-modes)
 - [Clock and USB API](api.md)
 - [Fonts, USB driver and persistence internals](development.md)
 - [USB startup correction history](history/bring-up.md)

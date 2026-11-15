@@ -1,3 +1,4 @@
+#include "usb_console.h"
 #include "device_log.h"
 #include "log_buffer.h"
 #include <cstdarg>
@@ -41,11 +42,11 @@ void printf(const char *format,...) {
   const int length=vsnprintf(line,sizeof(line),format,args);va_end(args);
   if(length<0)return;
   const size_t used=static_cast<size_t>(length)<sizeof(line)?length:sizeof(line)-1;
-  Serial.write(reinterpret_cast<const uint8_t *>(line),used);
+  UsbConsole::stream().write(reinterpret_cast<const uint8_t *>(line),used);
   record(line,used,static_cast<size_t>(length)>=sizeof(line));
 }
 void println(const char *message) {
-  Serial.println(message);
+  UsbConsole::stream().println(message);
   const size_t length=strlen(message),used=length<kLine-1?length:kLine-1;
   record(message,used,length>used);
 }

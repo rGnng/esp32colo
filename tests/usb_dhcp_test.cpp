@@ -38,7 +38,14 @@ size_t respond(const Packet &p, Reply &r, UsbDhcp::Lease &lease, uint32_t now = 
 
 void settingsChecks() {
   using namespace UsbNetworkSettings;
-  assert(valid(settings));
+  assert(valid(settings)&&settings.mode==kSerialJtag);
+  uint8_t mode=99;
+  assert(parseMode("serial_jtag",mode)&&mode==kSerialJtag);
+  assert(parseMode("serial_network",mode)&&mode==kSerialNetwork);
+  assert(!parseMode("ethernet",mode)&&!parseMode("rndis",mode)&&!parseMode("",mode));
+  auto network=settings;network.mode=0;assert(valid(network));
+  assert(std::strcmp(modeName(network.mode),"serial_network")==0);
+  network.mode=2;assert(!valid(network));
   uint8_t ip[4];
   assert(parse("172.32.29.1", ip) && !std::memcmp(ip, settings.address, 4));
   for (const auto *text : {"", "1.2.3", "1.2.3.4.5", "1.2.3.256", "1.2..3", "1.2.3.-1", "http://1.2.3.4"})

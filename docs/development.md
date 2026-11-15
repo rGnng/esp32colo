@@ -7,7 +7,151 @@ requests in the [API](api.md), and build/update procedures in [Flashing](flash.m
 Bluetooth controls, pairing and the bidirectional media-state contract are in the
 [Tab5 integration guide](tab5-integration.md). Serial companion work remains deferred.
 
+## Playback state implementation (0.6.30)
+
+**0.6.30-playback-states** replaces the shared lighting appearance/modifiers
+with Playing, Paused and Stopped plans. Stopped includes disconnect/stale/unknown
+feedback. Ring and Buttons have independent Scene/Custom sources per state.
+Custom controls include modes, colors and levels; progress/volume displays are
+restricted to Playing/Paused. One Save lighting commits all 42 light fields,
+while tab navigation and the Screen panel retain their independent drafts.
+
+Schema 3 stores 208 bytes and migrates v1/v2 with all screen options preserved.
+Old paused Dim resolves to channel overrides using current scene levels. The
+old Stopped preference initializes the combined Stopped/Disconnected plan;
+empty progress becomes its background lighting or Off. Stopped volume becomes
+Lighting. Hidden Custom settings remain stored when following the scene.
+Legacy shared API fields are rejected before any write, with a refresh message.
+The BLE wire contract and USB modes are unchanged.
+
+## Independent ring colors implementation (0.6.29)
+
+**0.6.29-ring-colors** separates filled and unfilled ring colors. The unfilled
+side can follow the filled side (initial choice) or use an independent static
+RGB color, with its saved brightness. Gamma-corrected colors blend at partial
+LED coverage; interpolation and symmetric fill geometry are unchanged. A
+104-byte version-2 playback record migrates all 23 values from the deployed
+96-byte version-1 record before initializing the new fields. Tests cover valid
+migration, corrupt legacy records, failed migration writes and retry.
+
+Stopped (nothing playing) is explicit in both panels. A fresh connected stop
+state yields zero fill even with no track duration or valid position clock,
+allowing the background color to show. Paused retains its position, while
+unavailable/stale state remains unknown. Existing stop light/screen selections
+are preserved. The USB modes and Serial + JTAG default are unchanged.
+
+## USB console and networking implementation (0.6.28)
+
+**0.6.28-usb-serial-network** combines the playback-appearance feature below with
+two General → USB & Network choices: CDC-ACM Serial + USB JTAG (default) and
+CDC-ACM Serial + CDC-ECM Network. Existing network-only settings gain ACM without
+changing the 12-byte NVS record or saved addresses. Serial/JTAG settings remain.
+The software composite device uses PID 0x4004 to distinguish the changed USB
+interface set from the previous ECM-only PID 0x4002. The old optional HID/JTAG
+experiment keeps its own environment and PID; it is not the production image.
+
+The console proxy routes logs, status and recovery commands to hardware ACM or
+software ACM as appropriate. A static 8192-byte TX queue avoids blocking on a
+host that stops reading. The pinned Arduino USBCDC write loop can spin when its
+TX FIFO fills, so software ACM uses the nonblocking TinyUSB FIFO from a single
+consumer. Overflow is counted, disconnected output is discarded, and the web
+log remains independent. Hardware writes are limited to reported free space.
+Software ACM disables host line-state-triggered reboot; ROM recovery is manual.
+
+Both environments, the full host suite and the local browser fixture passed.
+New tests exercise actual console routing/RX, full status-sized output, blocked
+hosts, partial drains, disconnect, buffer allocation failure, bounded overflow,
+mode defaults/validation and NVS byte compatibility. Browser checks confirm
+exactly two named USB options, conditional address fields and cancel-without-save,
+alongside the playback-panel checks below. Physical USB enumeration and
+serial/network host round trips remain unverified until run on the USB host.
+
+## Playback appearance implementation (0.6.27)
+
+**0.6.27-playback-settings** adds a Bluetooth playback navigation page with
+independent Lights and Screen panels. `/api/playback` stores a separate 96-byte,
+version-1 NVS record. Progress and Bluetooth volume have separate fill styles;
+the scene editor's fill menu is removed while legacy scene bytes are preserved.
+Initial fill settings copy the active scene's previous style. Playback colors,
+brightness, state fallbacks, screen elements and long-text handling are optional;
+defaults preserve the prior appearance. Action feedback, scene overlays and sleep
+keep priority. The BLE protocol and Tab5 firmware do not change.
+
+Both firmware environments and the full host suite passed. New fixtures cover
+settings bounds, partial/atomic validation, NVS restore/corruption/write failure,
+unchanged-write suppression, independent fills, dimming, state fallbacks and
+button-action priority. Browser checks using a local API fixture cover desktop
+and mobile layouts, manual dropdowns, independent drafts/saves, failed saves,
+reload, fixed title notifications and scene saves preserving the legacy style.
+The device-served release record below remains the last verified OTA.
+
 ## Current verified release
+
+**0.6.30-playback-states** was application-only OTA'd on **2026-11-15** to
+`ota_app0`. MD5 is `77d9193eecb61e90a94d62aaaed95027`; the 4,115,888-byte image
+has SHA-256 `a71fb84623369aad3e18a2e72873637985e2262a4f097a19076acdf04faf1c2c`.
+Frozen production image/ELF, source patch and untracked source, exact migration
+inputs/expected output and before/after evidence are in ignored
+`backups/playback-states/`, based on `3d17cab` plus the recorded feature changes.
+
+Both firmware environments and the full host suite passed. Coverage includes
+independent state/channel plans, stale/unknown feedback mapping to Stopped,
+restricted Stopped displays, old Dim/Off/Scene conversions, RGB blending,
+atomic mixed updates, stale-client rejection, v1/v2 migrations and failed-write
+retry for both old formats. Browser checks at 320/375/1280 pixels exercised
+all-state saves, independent screen drafts, tab/keyboard navigation, hidden
+custom values, failed save/reload and stable title notices. Device-served
+mobile/desktop checks made no writes and had no JavaScript errors.
+
+The first live schema-3 profile matched every expected field from the production
+migration helper using the captured v2 profile and resolved scene context.
+The device reports hardware ready, cleared boot attempts, no recovery mode,
+fresh BLE/prediction and no input/LED/audio/BLE errors. General, network and
+scenes were preserved; USB remains CDC-ACM Serial + USB JTAG. No Tab5 firmware
+or BLE contract changed. Physical host round trips for the alternative ACM +
+ECM mode remain pending from the preceding USB work.
+
+## Previous independent ring-color release
+
+**0.6.29-ring-colors** was application-only OTA'd on **2026-11-15** to
+`ota_app1`. MD5 is `7973e6e5f821dcdc9c3c1440e70381e8`; the 4,110,896-byte image
+has SHA-256 `34551784799dc76b361186e87bfd7567fedcab814237f508e159ef175fd344a9`.
+The frozen production image, ELF, source patch/untracked files, manifests and
+before/after records are in ignored `backups/ring-colors/`, based on `3d17cab`.
+
+Both environments and the full host suite passed, including RGB blend endpoints
+and partial coverage, all legacy playback-field migration, corrupt/failing NVS
+migration and retry, and stopped/no-track progress with an invalid position
+clock. Browser checks at 320/375/1280 pixels exercised independent filled/unfilled
+colors, partial panel saves, the explicit stopped labels, USB choices and error
+recovery. Device-served mobile/desktop checks made no writes and had no JS errors.
+
+The live device reports hardware ready, cleared boot attempts, fresh BLE and no
+input/LED/audio/BLE errors. USB remains Serial + JTAG; WiFi/network/General/scenes
+were preserved. Previously saved playback choices migrated, and subsequent live
+UI color/Stopped-screen edits were retained. The new independent background was
+selected through the live page. No Tab5 firmware or BLE contract changed.
+Physical USB-host round trips for the alternative ACM + ECM mode remain pending.
+
+## Previous USB and playback release
+
+**0.6.28-usb-serial-network** was application-only OTA'd on **2026-11-15** to
+`ota_app0`. MD5 is `e9d264d15eaac4eb17fddb8ec8c33a3b`; the 4,110,544-byte image
+has SHA-256 `89c0e8c152e3a794125793c47d851770200ea921b928fc6380f31257d168edb3`.
+It includes the shared playback page and two USB modes. Source is base
+`3d17cab` plus the frozen feature patch/untracked source under ignored
+`backups/combined-usb-playback/`. Both environments and the full host suite
+passed, including actual console routing/backpressure and NVS fixtures.
+
+Live checks verified hardware ready, fresh BLE/prediction, clear boot attempts
+and no recovery mode. The composite ACM + ECM mode reached ready/error-free
+startup with the expected protocol; Serial + JTAG was restored and confirmed
+after reboot. Physical host serial/network round trips remain pending.
+General/network/scenes were preserved. Playback settings were edited through
+the live UI during checks; those saved changes were retained. Device-served
+mobile/desktop browser checks made no writes and had no JavaScript errors.
+
+## Previous icon-and-bar release
 
 **0.6.26-volume-bar** removes the numeric volume percentage from ColoPlay's
 Bluetooth volume screen. The speaker icon and bar remain, using the negotiated

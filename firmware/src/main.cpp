@@ -19,8 +19,11 @@
 #include "clock_service.h"
 #include "scene_service.h"
 #include "general_service.h"
+#include "playback_service.h"
+#include "lighting_settings.h"
 #include "bluetooth_service.h"
 #include "usb_network.h"
+#include "usb_console.h"
 #include "usb_experiment.h"
 #include "web_ui.h"
 #include "web_assets.h"
@@ -31,7 +34,7 @@ constexpr const char *kHostname = "coloplay";
 #ifdef COLOPLAY_USB_CONCURRENCY_TEST
 constexpr const char *kFirmwareVersion = "0.4.1-usb-concurrency-test";
 #else
-constexpr const char *kFirmwareVersion = "0.6.26-volume-bar";
+constexpr const char *kFirmwareVersion = "0.6.30-playback-states";
 #endif
 constexpr const char *kPrefsNamespace = "wifi";
 constexpr uint32_t kWifiRetryMs = 10000;
@@ -204,7 +207,7 @@ String statusJson() {
 // stored WiFi credentials are wrong and the web interface is unreachable.
 void handleSerialCommand(const String &line) {
   if (line == "status") {
-    Serial.println(statusJson());
+    UsbConsole::stream().println(statusJson());
     return;
   }
   if (line == "wifi-reset") {
@@ -239,8 +242,8 @@ void handleSerialCommand(const String &line) {
 }
 
 void pollSerial() {
-  while (Serial.available() > 0) {
-    char c = static_cast<char>(Serial.read());
+  while (UsbConsole::stream().available() > 0) {
+    char c = static_cast<char>(UsbConsole::stream().read());
     if (c == '\n' || c == '\r') {
       if (!gSerialLine.isEmpty()) {
         handleSerialCommand(gSerialLine);
@@ -265,6 +268,12 @@ void setupHttp() {
   InputTrace::setup(server);
   server.on("/api/status", HTTP_GET, [] {
     server.send(200, "application/json", statusJson());
+  });
+  server.on("/api/playback",HTTP_GET,[]{server.send(200,"application/json",PlaybackService::statusJson());});
+  server.on("/api/playback",HTTP_POST,[]{
+    String error;
+    if(!PlaybackService::configure(server,error)){server.send(400,"application/json","{\"error\":\""+jsonEscape(error)+"\"}");return;}
+    server.send(200,"application/json",PlaybackService::statusJson());
   });
   server.on("/api/general",HTTP_GET,[]{server.send(200,"application/json",GeneralService::statusJson());});
   server.on("/api/bluetooth",HTTP_GET,[]{server.send(200,"application/json",BluetoothService::statusJson());});
@@ -400,7 +409,7 @@ void setupOta() {
   });
   ArduinoOTA.onEnd([] { DeviceLog::println("\n[ota] update finished"); });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    Serial.printf("[ota] %u%%\r", total ? (progress * 100) / total : 0);
+    UsbConsole::stream().printf("[ota] %u%%\r", total ? (progress * 100) / total : 0);
   });
   ArduinoOTA.onError([](ota_error_t error) {
     gArduinoOtaBusy = false;
@@ -458,6 +467,19 @@ void setup() {
   BluetoothService::load();
   ClockService::begin();
   SceneService::begin(HardwareDemo::applyAction);
+  LightingSettings::Stored migrationLighting;Preferences migrationPrefs;
+  if(migrationPrefs.begin("lighting",true)){
+    LightingSettings::Stored saved;
+    if(migrationPrefs.getBytesLength("settings")==sizeof(saved)&&migrationPrefs.getBytes("settings",&saved,sizeof(saved))==sizeof(saved)&&LightingSettings::valid(saved))migrationLighting=saved;
+    migrationPrefs.end();
+  }
+  PlaybackSettings::MigrationContext playbackContext;
+  playbackContext.ringStyle=SceneService::ringStyle();playbackContext.sceneProgress=SceneService::ringDisplay()==SceneSettings::kRingBluetoothProgress;
+  playbackContext.ringLevel=SceneSettings::resolvedLevel(SceneService::brightness(1),migrationLighting.ring).percent;
+  playbackContext.keysLevel=SceneSettings::resolvedLevel(SceneService::brightness(2),migrationLighting.keys).percent;
+  const auto migrationKeys=SceneSettings::resolveLighting(SceneService::lighting(false),migrationLighting.mode==LightingSettings::kStatic,migrationLighting.color);
+  playbackContext.keysRainbow=migrationKeys.mode==SceneSettings::kSceneRainbow;playbackContext.keysColor=migrationKeys.color;
+  PlaybackService::begin(playbackContext);
   UsbNetwork::loadSettings();
 
   // The application owns the credentials in the "wifi" NVS namespace.
@@ -518,6 +540,7 @@ void loop() {
 #endif
   ClockService::tick();
   if(!gArduinoOtaBusy&&!HttpOta::busy())SceneService::tick();
+  UsbConsole::tick();
   pollSerial();
   if (!gArduinoOtaBusy && !HttpOta::busy()) {
     if (!gHardwareStarted && !gRecoveryMode &&
