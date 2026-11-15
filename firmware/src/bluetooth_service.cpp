@@ -47,7 +47,7 @@ bool hasPeer(){uint8_t any=0;for(auto byte:gSettings.peer)any|=byte;return any!=
 bool pairing(){return gPairUntil&&static_cast<int32_t>(gPairUntil-millis())>0;}
 String quote(const char *value){String s="\"";for(const unsigned char *p=(const unsigned char*)value;*p;++p){if(*p=='"'||*p=='\\')s+='\\';if(*p>=32)s+=char(*p);}return s+'"';}
 String address(const uint8_t *p){char out[18];snprintf(out,sizeof(out),"%02X:%02X:%02X:%02X:%02X:%02X",p[0],p[1],p[2],p[3],p[4],p[5]);return out;}
-void clearState(){gPlaybackClock.reset();gState.track=0;gState.elapsedMs=gState.durationMs=0;gState.connected=gState.secured=gState.extension=gState.fresh=gState.available=gState.pending=false;gState.volume=gState.preview=-1;gState.playback=255;gState.seek=0;gState.title[0]=gState.artist[0]=0;}
+void clearState(){gPlaybackClock.reset();gState.track=0;gState.elapsedMs=gState.durationMs=0;gState.connected=gState.secured=gState.extension=gState.floatVolume=gState.fresh=gState.available=gState.pending=false;gState.volume=gState.preview=-1;gState.playback=255;gState.seek=0;gState.title[0]=gState.artist[0]=0;}
 class ServerCallbacks:public BLEServerCallbacks {
  void onConnect(BLEServer*,esp_ble_gatts_cb_param_t *param)override {
    portENTER_CRITICAL(&gMux);clearState();gState.connected=true;gConn=param->connect.conn_id;memcpy(gRemote,param->connect.remote_bda,6);gSession=esp_random();if(!gSession)gSession=1;gNextRequest=0;portEXIT_CRITICAL(&gMux);
@@ -72,7 +72,7 @@ class SecurityCallbacks:public BLESecurityCallbacks {
  }
 } gSecurityCallbacks;
 class CapsCallbacks:public BLECharacteristicCallbacks {
- void onRead(BLECharacteristic *c)override{uint8_t data[CP_BLE_BYTES];portENTER_CRITICAL(&gMux);cp_header(data,CP_HELLO,0,gSession);portEXIT_CRITICAL(&gMux);data[8]=CP_CAP_MEDIA|CP_CAP_VOLUME|CP_CAP_KEY|CP_CAP_STATE;c->setValue(data,sizeof(data));}
+ void onRead(BLECharacteristic *c)override{uint8_t data[CP_BLE_BYTES];portENTER_CRITICAL(&gMux);cp_header(data,CP_HELLO,0,gSession);portEXIT_CRITICAL(&gMux);data[8]=CP_CAP_MEDIA|CP_CAP_VOLUME|CP_CAP_KEY|CP_CAP_STATE|CP_CAP_VOLUME_FLOAT;c->setValue(data,sizeof(data));}
 } gCapsCallbacks;
 class StateCallbacks:public BLECharacteristicCallbacks {
  void onWrite(BLECharacteristic *c)override{
@@ -82,10 +82,14 @@ class StateCallbacks:public BLECharacteristicCallbacks {
    if(p[1]==CP_TEXT){const unsigned field=p[2]&0x7f,offset=p[3],n=p[8];if((field==1||field==2)&&offset<63&&n<=11&&offset+n<=63){char *target=gText[field-1];if(!offset)memset(target,0,64);memcpy(target+offset,p+9,n);target[offset+n]=0;if(p[2]&0x80)memcpy(field==1?gState.title:gState.artist,target,64);}else ++gInvalid;}
    else if(p[1]==CP_TRACK){gState.track=uint64_t(cp_u32(p+8))|(uint64_t(cp_u32(p+12))<<32);gPlaybackClock.track(gState.track);gState.title[0]=gState.artist[0]=0;memset(gText,0,sizeof(gText));}
    else if(cp_state_valid(p,bytes.size())){
-     gState.extension=true;if(p[1]==CP_HELLO)gState.nativeSteps=p[8]==64?64:16;
-     if(p[1]==CP_STATE){gState.receivedAt=millis();gState.available=(p[10]&0x80)!=0;gState.volume=(int8_t)p[8];gState.playback=p[9];gState.seek=p[10]&3;gState.elapsedMs=cp_u32(p+12);gState.durationMs=cp_u32(p+16);
+     gState.extension=true;if(p[1]==CP_HELLO){gState.nativeSteps=p[8]==64?64:16;gState.floatVolume=(p[16]&CP_CAP_VOLUME_FLOAT)!=0;}
+     if(p[1]==CP_STATE){gState.receivedAt=millis();gState.available=(p[10]&0x80)!=0;if(!gState.floatVolume)gState.volume=(int8_t)p[8]<0?-1.0f:(int8_t)p[8]/100.0f;gState.playback=p[9];gState.seek=p[10]&3;gState.elapsedMs=cp_u32(p+12);gState.durationMs=cp_u32(p+16);
        gPlaybackClock.update(gState.available,gState.playback,gState.seek,gState.elapsedMs,gState.durationMs,gState.receivedAt);
-       const uint16_t request=cp_u16(p+2);if(request&&request==gState.request){gState.result=p[11];gState.pending=p[11]==CP_PENDING||p[11]==CP_ACCEPTED;if(!gState.pending)gState.preview=-1;}}
+       const uint16_t request=cp_u16(p+2);if(!gState.floatVolume&&request&&request==gState.request){gState.result=p[11];gState.pending=p[11]==CP_PENDING||p[11]==CP_ACCEPTED;if(!gState.pending)gState.preview=-1;}}
+     if(p[1]==CP_VOLUME_STATE&&gState.floatVolume){
+       gState.volume=cp_float(p+8);const uint16_t request=cp_u16(p+2);
+       if(request&&request==gState.request){gState.result=p[12];gState.pending=p[12]==CP_PENDING||p[12]==CP_ACCEPTED;if(!gState.pending)gState.preview=-1;}
+     }
    }else ++gInvalid;
    portEXIT_CRITICAL(&gMux);
  }
@@ -169,12 +173,12 @@ void tick(bool hardwareReady){
 }
 bool send(uint8_t kind,uint16_t usage,int count,uint16_t parameter,uint16_t duration){
   auto s=snapshot();if(!gQueue||!s.connected||!s.secured||count<1||count>(kind==CP_VOLUME?32767:127)||(!s.extension&&kind==CP_VOLUME&&parameter!=1)){portENTER_CRITICAL(&gMux);gState.result=CP_UNSUPPORTED;gState.pending=false;gState.preview=-1;portEXIT_CRITICAL(&gMux);return false;}
-  Out out;portENTER_CRITICAL(&gMux);if(++gNextRequest==0)++gNextRequest;cp_header(out.bytes,kind,gNextRequest,gSession);portEXIT_CRITICAL(&gMux);cp_put16(out.bytes+8,usage);cp_put16(out.bytes+10,count);cp_put16(out.bytes+12,parameter);cp_put16(out.bytes+14,duration);if(!cp_command_valid(out.bytes,sizeof(out.bytes)))return false;
+  Out out;portENTER_CRITICAL(&gMux);if(++gNextRequest==0)++gNextRequest;cp_header(out.bytes,kind,gNextRequest,gSession);portEXIT_CRITICAL(&gMux);cp_put16(out.bytes+8,usage);cp_put16(out.bytes+10,count);cp_put16(out.bytes+12,parameter);cp_put16(out.bytes+14,duration);if(kind==CP_VOLUME&&s.floatVolume)cp_put_float(out.bytes+16,1.0f/(parameter==1?s.nativeSteps:parameter));if(!cp_command_valid(out.bytes,sizeof(out.bytes)))return false;
   if(!s.extension&&count!=1)return false; // callers enqueue each native HID tap separately.
   if(xQueueSend(gQueue,&out,0)!=pdTRUE){++gDropped;return false;}
   gRequestAt=millis();
   portENTER_CRITICAL(&gMux);gState.request=gNextRequest;gState.usage=usage;gState.result=s.extension?CP_PENDING:CP_ACCEPTED;gState.pending=s.extension;
-  if(kind==CP_VOLUME&&s.fresh&&s.volume>=0){const int steps=parameter==1?s.nativeSteps:parameter;const int base=gState.preview>=0?gState.preview:s.volume;gState.preview=volume_grid_step(base,(usage==0xe9?1:-1)*count,steps);}
+  if(kind==CP_VOLUME&&s.fresh&&s.volume>=0){const int steps=parameter==1?s.nativeSteps:parameter;const float base=gState.preview>=0?gState.preview:s.volume;gState.preview=volume_grid_step(base,(usage==0xe9?1:-1)*count,steps);}
   portEXIT_CRITICAL(&gMux);return true;
 }
 void cancel(){if(gQueue)xQueueReset(gQueue);const auto s=snapshot();if(s.connected&&s.secured)send(CP_RELEASE,0,1);}
@@ -190,5 +194,5 @@ bool configure(WebServer &server,String &error){
   error="op must be enable, disable, pair, stop_pairing or forget";return false;
 }
 String statusJson(){const auto s=snapshot();char track[17];snprintf(track,sizeof(track),"%016llx",(unsigned long long)s.track);const int remaining=pairing()?int((gPairUntil-millis()+999)/1000):0;String out="{\"enabled\":"+String(s.enabled?"true":"false")+",\"ready\":"+String(s.ready?"true":"false")+",\"stored\":"+String(gStored?"true":"false")+",\"connected\":"+String(s.connected?"true":"false")+",\"secured\":"+String(s.secured?"true":"false")+",\"extension\":"+String(s.extension?"true":"false")+",\"pairing_seconds\":"+String(remaining)+",\"peer\":"+quote(hasPeer()?address(gSettings.peer).c_str():"");
- out+=",\"last_panic\":"+PanicCapture::json()+",\"error\":"+String(gStartError)+",\"stage\":"+String(gStartAttempted?gRtcStage:0)+",\"last_boot_stage\":"+String(gPreviousStage)+",\"last_boot_heap\":"+String(gPreviousHeap)+",\"track\":"+quote(track)+",\"advertising\":"+String(gAdvertisingOn?"true":"false")+",\"fresh\":"+String(s.fresh?"true":"false")+",\"available\":"+String(s.available?"true":"false")+",\"volume\":"+String(s.volume)+",\"preview\":"+String(s.preview)+",\"playback\":"+String(s.playback)+",\"seek\":"+String(s.seek)+",\"request\":"+String(s.request)+",\"result\":"+String(s.result)+",\"pending\":"+String(s.pending?"true":"false")+",\"title\":"+quote(s.title)+",\"artist\":"+quote(s.artist)+",\"elapsed_ms\":"+String(s.elapsedMs)+",\"position_ms\":"+String(s.positionMs)+",\"position_valid\":"+String(s.positionValid?"true":"false")+",\"duration_ms\":"+String(s.durationMs)+",\"sent\":"+String(gSent)+",\"dropped\":"+String(gDropped)+",\"invalid\":"+String(gInvalid.load())+"}";return out;}
+ out+=",\"last_panic\":"+PanicCapture::json()+",\"error\":"+String(gStartError)+",\"stage\":"+String(gStartAttempted?gRtcStage:0)+",\"last_boot_stage\":"+String(gPreviousStage)+",\"last_boot_heap\":"+String(gPreviousHeap)+",\"track\":"+quote(track)+",\"advertising\":"+String(gAdvertisingOn?"true":"false")+",\"fresh\":"+String(s.fresh?"true":"false")+",\"available\":"+String(s.available?"true":"false")+",\"volume\":"+String(s.volume<0?-1.0f:s.volume*100.0f,4)+",\"volume_fraction\":"+String(s.volume,8)+",\"float_volume\":"+String(s.floatVolume?"true":"false")+",\"preview\":"+String(s.preview<0?-1.0f:s.preview*100.0f,4)+",\"playback\":"+String(s.playback)+",\"seek\":"+String(s.seek)+",\"request\":"+String(s.request)+",\"result\":"+String(s.result)+",\"pending\":"+String(s.pending?"true":"false")+",\"title\":"+quote(s.title)+",\"artist\":"+quote(s.artist)+",\"elapsed_ms\":"+String(s.elapsedMs)+",\"position_ms\":"+String(s.positionMs)+",\"position_valid\":"+String(s.positionValid?"true":"false")+",\"duration_ms\":"+String(s.durationMs)+",\"sent\":"+String(gSent)+",\"dropped\":"+String(gDropped)+",\"invalid\":"+String(gInvalid.load())+"}";return out;}
 }

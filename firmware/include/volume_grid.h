@@ -1,23 +1,29 @@
 #ifndef MPDTAB5_VOLUME_GRID_H
 #define MPDTAB5_VOLUME_GRID_H
 
-/* Match Headunit: round to the nearest grid position, then move whole notches.
- * MPD accepts integer percentages, so round each position to 0..100 as well. */
+/* Normalized 0..1 levels retain exact binary 1/16 and 1/64 positions.
+ * Convert to integer percentages only at the MPD/legacy display boundary. */
 static inline int volume_steps_normalize(int steps) { return steps == 64 ? 64 : 16; }
-static inline int volume_grid_step(int level, int delta, int steps)
+static inline float volume_grid_step(float level, int delta, int steps)
 {
     steps = volume_steps_normalize(steps);
-    if(level < 0) level = 0;
-    if(level > 100) level = 100;
-    int index = (level * steps + 50) / 100;
+    if(!(level >= 0.0f)) level = 0.0f;
+    if(level > 1.0f) level = 1.0f;
+    int index = (int)(level * steps + 0.5f);
     if(delta > steps - index) index = steps;
     else if(delta < -index) index = 0;
     else index += delta;
-    return (index * 100 + steps / 2) / steps;
+    return (float)index / steps;
 }
-static inline int volume_grid_snap(int level, int steps)
+static inline float volume_grid_snap(float level, int steps)
 {
     return volume_grid_step(level, 0, steps);
+}
+static inline int volume_percent(float level)
+{
+    if(!(level >= 0.0f)) return -1;
+    if(level > 1.0f) level = 1.0f;
+    return (int)(level * 100.0f + 0.5f);
 }
 
 #endif

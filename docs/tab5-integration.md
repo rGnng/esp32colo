@@ -70,13 +70,18 @@ other keys/modifiers. These commands enter Tab5's existing input queue.
 
 An explicit 1/64 or 1/16 action selects that grid for the command, without
 changing Tab5's saved step setting. **Host step** follows Tab5's current 16/64
-setting. Each command starts from the raw MPD server percentage, finds the
-nearest grid index, applies whole detents, then rounds the target to MPD's
-integer percentage. This reuses the exact `volume_grid_step` helper introduced
-in `a34fa8a`; it does not maintain a second fractional accumulator. For example,
-100 → down one 1/64 step → 98 → up one step → 100; a 1/16 step gives 94.
-The local preview uses the same grid, then yields to returned server state.
+setting. Each command snaps the current normalized floating-point volume to
+that grid, then applies whole detents. Tab5 and ColoPlay retain exact 1/16 and
+1/64 fractions for confirmed state and local previews. Only MPD's `setvol`
+argument rounds to an integer percentage. Tab5 retains the fractional target
+when the server echoes that rounded value, and adopts external server changes
+when their percentage differs. For example, one 1/64 step is internally
+0.015625 (1.5625%), even though MPD receives `setvol 2`.
 MPD `-1` means no mixer; mute uses Tab5's existing MPD mute behavior.
+
+The shared `volume_grid_step` helper uses normalized floats in both firmware
+projects. Bluetooth volume LCD percentages show two decimal places; the ring
+uses the same fractional source, rounded only for its physical display.
 
 Fast Forward and Rewind are stepped `seekcur +5` / `seekcur -5` operations,
 not changes in playback speed. Configure **Hold → Start** and **Hold then
@@ -153,13 +158,25 @@ an MTU upgrade. All multibyte integers are little endian.
 
 Common header: version byte 0, kind byte 1, request ID bytes 2–3, session
 nonce bytes 4–7. Command bytes 8–15 contain usage, count, parameter and pulse
-duration as four uint16 values. Reserved bytes are zero. Release cancels custom
+duration as four uint16 values. With floating-point volume negotiated, volume
+commands also mirror the exact normalized step as little-endian IEEE-754
+binary32 in bytes 16–19; zero retains the legacy denominator-only encoding.
+Release cancels custom
 seeking. Session checks and a bounded recent-request cache prevent duplicate
 controls and stale replies after reconnect. Queues are bounded; no old command
 is replayed after disconnect. Neither firmware performs MPD socket I/O in the
 render/input or BLE callback path.
 
-HELLO reports the native volume grid. STATE carries signed volume, playback
+HELLO reports the native volume grid. Capability bit `CP_CAP_VOLUME_FLOAT`
+(0x10) in the capabilities byte and the returning HELLO byte 16 negotiates exact
+volume feedback. HELLO bytes 12–15 carry the normalized native step. A companion
+`CP_VOLUME_STATE` (kind 20) carries normalized float volume in bytes 8–11 and the
+request result in byte 12, using the same request ID/session as STATE. -1 means
+unavailable. New peers use this frame for volume and command outcomes; the
+legacy STATE remains intact for playback/timing and older peers. All frames
+still fit the default 20-byte ATT payload, with full 32-bit elapsed/duration.
+
+STATE carries legacy integer percentage volume, playback
 (0 stopped / 1 playing / 2 paused / 255 unknown), backend availability, seek
 direction, request outcome, elapsed and duration in milliseconds. Outcomes are
 Pending, Accepted, Applied, Failed, No change, Unsupported and Busy. Applied

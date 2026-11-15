@@ -3,8 +3,9 @@
 #include <WebServer.h>
 namespace BluetoothService {
 struct Snapshot {
-  bool enabled=false,ready=false,connected=false,secured=false,extension=false,fresh=false,available=false,pending=false,positionValid=false;
-  int nativeSteps=16,volume=-1,playback=255,seek=0,result=0,preview=-1;
+  bool floatVolume=false,enabled=false,ready=false,connected=false,secured=false,extension=false,fresh=false,available=false,pending=false,positionValid=false;
+  int nativeSteps=16,playback=255,seek=0,result=0;
+  float volume=-1.0f,preview=-1.0f;
   uint16_t request=0,usage=0;
   uint32_t elapsedMs=0,durationMs=0,receivedAt=0,positionMs=0;
   uint64_t track=0;

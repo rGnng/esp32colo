@@ -16,6 +16,7 @@
 #include "general_service.h"
 #include "idle_timer.h"
 #include "bluetooth_service.h"
+#include "volume_grid.h"
 #include "playback_ring.h"
 #include "playback_assets.h"
 #include "bitmap_font.h"
@@ -274,8 +275,8 @@ void render(uint32_t now) {
       gCanvas.setTextDatum(MC_DATUM);gCanvas.setTextColor(TFT_WHITE,kBackground);
       if(!s.fresh||!s.available){bluetoothConnecting();break;}
       gCanvas.drawString("Bluetooth volume",120,54,2);
-      const int value=s.pending&&s.preview>=0?s.preview:s.volume;
-      gCanvas.setTextSize(2);gCanvas.drawString(s.available&&value>=0?String(value)+"%":"--",120,115,4);gCanvas.setTextSize(1);
+      const float value=s.pending&&s.preview>=0?s.preview:s.volume;
+      gCanvas.setTextSize(2);gCanvas.drawString(s.available&&value>=0?String(value*100.0f,2)+"%":"--",120,115,4);gCanvas.setTextSize(1);
       gCanvas.drawString(s.volume<0?"Mixer unavailable":s.pending?"Pending":s.result==CP_UNSUPPORTED?"Unsupported":s.result==CP_BUSY?"Busy":s.result==CP_FAILED?"Failed":"Confirmed",120,168,2);
       break;
     }
@@ -304,7 +305,7 @@ void animateLeds(uint32_t now) {
   if (gLedTest && static_cast<int32_t>(now - gLedTestUntil) >= 0) gLedTest = 0;
   const auto feedback = SceneService::feedback();
   const auto remote=BluetoothService::snapshot();
-  const int remotePercent=remote.pending&&remote.preview>=0?remote.preview:remote.volume;
+  const int remotePercent=volume_percent(remote.pending&&remote.preview>=0?remote.preview:remote.volume);
   const int progress=PlaybackRing::progress(remote.fresh&&remote.available&&remote.positionValid,remote.playback,remote.positionMs,remote.durationMs);
   const auto ring = SceneSettings::resolveLighting(SceneService::lighting(true),gLighting.mode==LightingSettings::kStatic,gLighting.color);
   const auto keys = SceneSettings::resolveLighting(SceneService::lighting(false),gLighting.mode==LightingSettings::kStatic,gLighting.color);
@@ -382,7 +383,7 @@ int applyAction(const SceneSettings::Action &a, int repetitions) {
       const auto s=BluetoothService::snapshot();const int denominator=abs(a.value);const int usage=a.value>0?0xe9:0xea;
       if(s.extension)BluetoothService::send(CP_VOLUME,usage,repetitions,denominator);
       else for(int n=0;n<repetitions;++n)if(!BluetoothService::send(CP_VOLUME,usage,1,denominator))break;
-      const auto after=BluetoothService::snapshot();result=after.preview>=0?after.preview:after.volume;break;
+      const auto after=BluetoothService::snapshot();result=volume_percent(after.preview>=0?after.preview:after.volume);break;
     }
     case kBluetoothMedia:
       if(a.target==2)BluetoothService::send(CP_RELEASE,a.value,1);
