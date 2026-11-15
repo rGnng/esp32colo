@@ -108,6 +108,51 @@ percentages. Older integer-only servers retain an explicit invalid-argument
 fallback, but the Integer profiles are the appropriate choice for their targets.
 MPD `-1` means no mixer. Mute retains the selected scale's saved restore behavior.
 
+### Observed macOS volume scale
+
+With the tested Tracks/macOS output, accepting a fractional MPD `setvol` does
+not guarantee identical mixer readback. Tracks accepts the requested percentage;
+the system/output volume path can quantize it, and status reports the actual
+returned scalar. Here, "raw" means that normalized mixer value (`0..1`), not a
+log message or the controller's logical position.
+
+The observed values fit `raw = (n / 127)²`, for integer `n` from 0 through 127:
+
+| Requested raw MPD percentage | Observed raw percentage | Matching `n` |
+|---|---|---|
+| 6.25% | 6.3488% | 32 |
+| 25% | 25.3953% | 64 |
+| 28.125% | 27.8319% | 67 |
+
+This is an inferred 128-level squared model for the tested output, not a
+universal CoreAudio guarantee. Other devices, drivers and mixer implementations
+can use different scales. Integer requests can also be quantized; sending 5% or
+61% does not force this output to return exactly those values.
+
+A 64-step controller and this inferred 128-level output are separate grids.
+Adding a fixed raw `1/64` or `1/16` to each rounded readback shifts the next
+target away from the intended control grid. Showing a predicted raw target and
+then replacing it with its quantized echo also caused the visible
+28.125% → 27.8319% correction in the earlier implementation.
+
+The squared profiles instead define a logical position `x = i / N`, with
+`N = 16` or `64`, and request raw target `x²` using absolute MPD `setvol`.
+Readback maps to the nearest target in that profile, and a confirmed target/echo
+pair preserves the logical reference until an external change invalidates it.
+For example, control position 25% requests raw 6.25%; the observed raw 6.3488%
+maps back to the same 25% position. ColoPlay's bar and ring use that position;
+the physical volume screen shows no number. Actual raw feedback remains in
+diagnostics, separate from the target and predicted display coordinate.
+
+The firmware does not hard-code the inferred 128-level hardware model. The
+shared lookup tables contain the four selectable control profiles: 17 + 65 +
+51 + 21 = 154 raw targets (616 bytes per device). Nearest-target lookup uses
+binary search, with no runtime square root or logarithm. Tab5 announces the
+selected profile over BLE; ColoPlay uses the same table for immediate prediction
+and reconciles pending turns against confirmed feedback. The 2% and 5% Integer
+profiles provide linear whole-percent commands for Linux/Windows or integer-only
+servers; they cannot remove quantization imposed by an output device.
+
 ### Responsive prediction
 
 Tab5 announces its four-profile scale setting during connection setup and refreshes it

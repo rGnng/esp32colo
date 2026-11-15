@@ -275,6 +275,10 @@ logical lookup position, preventing small quantization changes from bouncing
 the displayed value. Existing fine/coarse bindings retain their direction. Pending/result
 details are available in Device diagnostics and the web log. See the
 [Tab5 integration guide](tab5-integration.md) for setup, mappings and limits.
+For the tested macOS output, use a squared profile: the controller position and
+raw system volume differ, and accepted requests can return quantized values.
+The [macOS scale findings](tab5-integration.md#observed-macos-volume-scale)
+explain the measurements, grid mapping and device-specific limits.
 Serial companion actions remain deferred.
 
 Each action can keep the current screen or select **Clock**, **Blank**,

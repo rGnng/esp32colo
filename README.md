@@ -18,6 +18,8 @@ Current firmware: **`0.6.26-volume-bar`**. Tab5 owns the selected volume scale:
 **5% Integer**. ColoPlay synchronizes it over BLE and predicts immediate
 screen/ring response. Small curved hardware readback differences map back to
 the same displayed scale position. Commands remain Up/Down only.
+The [macOS volume findings](docs/tab5-integration.md#observed-macos-volume-scale)
+explain raw mixer quantization and the squared control profiles.
 The volume screen shows a speaker icon and bar; command outcomes
 stay in Device diagnostics and the web log. General combines WiFi and USB
 status in one Network panel, with separate modal editors and grouped controls.
