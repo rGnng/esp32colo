@@ -9,6 +9,32 @@ Bluetooth controls, pairing and the bidirectional media-state contract are in th
 
 ## Current verified release
 
+**0.6.26-volume-bar** removes the numeric volume percentage from ColoPlay's
+Bluetooth volume screen. The speaker icon and bar remain, using the negotiated
+scale and immediate prediction described below. Raw/confirmed volume and
+pending-request details remain available in diagnostics.
+
+Application-only OTA on **2026-11-15** verified ColoPlay source
+[`78c54f1`](https://github.com/rGnng/esp32colo/commit/78c54f1245d77eea48838c4157f63573a0efb383),
+MD5 `a17ab6a4514f21b86dfb7350b6a1ddbf` on `ota_app1`. The 4,096,736-byte image
+has SHA-256 `f5ec568ec75b3c5822c0cc339108c0d128047082ac3f0cb6c822d6976d00d282`.
+Tab5 source [`80acc5d`](https://github.com/rGnng/mpdtab5/commit/80acc5de9439fda8e1da57e541adb66d2f1cc20a)
+was rebuilt and reflashed; its 2,885,344-byte application verified ELF SHA-256
+`ff8d0e65d739760ce8ecd418658e95951cf83d530d5c6aca91676210f0da8c68` on `ota_0`.
+Its binary is unchanged from the preceding scale deployment. Partition changes
+and reboot uptime were checked independently of its matching hash.
+
+Both ColoPlay builds and the host suite passed. Tab5 passed 101 MPD tests,
+8 volume tests, the production BLE fixture and all 21 native CTests.
+Post-reboot checks verified hardware ready, cleared boot attempts, recovery off,
+fresh BLE feedback and negotiated prediction. General/network settings, scene
+bindings and Tab5 configuration were preserved. Live knob inputs occurred
+during verification; both devices agreed on the resulting volume. Device-served
+desktop/mobile editor checks made no writes and reported no JavaScript errors. Frozen images, manifests and before/after evidence are in
+ignored `backups/releases/78c54f1/`.
+
+## Previous volume-scale release
+
 **0.6.25-volume-scales** adds four host-owned profiles: **1/16 Squared Curve**,
 **1/64 Squared Curve** (default), **2% Integer** and **5% Integer**. Tab5's native
 and web settings persist the choice in the existing `volume_steps` field.
