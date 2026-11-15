@@ -1,8 +1,10 @@
 # Bluetooth controls and Tab5 feedback
 
-Current ColoPlay firmware: **0.6.20-network-panel**; its source/build identity
+Current ColoPlay firmware: **0.6.22-speaker-icon**; its source/build identity
 is in the [release record](development.md#current-verified-release).
-The recorded Tab5 peer driver is
+Fractional-volume support follows Tab5 commit
+[`7860a0a`](https://github.com/rGnng/mpdtab5/commit/7860a0a), using matching
+shared protocol and volume-grid headers. The original recorded Tab5 peer driver is
 [`79c5dac`](https://github.com/rGnng/mpdtab5/commit/79c5dacd1f38a955f3ea2a8abff5b719d5d616d3),
 built on [`a34fa8a`](https://github.com/rGnng/mpdtab5/commit/a34fa8a2c7547573f128b47061d7359f3f504a81).
 The existing MPD volume-grid helper and worker remain authoritative. Tab5's
@@ -51,10 +53,14 @@ platform virtual-key codes. See the shared protocol header for exact values.
 
 **Bluetooth volume** and **Bluetooth playback** are available as both idle
 screens and action screen effects; Clock and Blank remain available. Volume
-shows a pending target followed by confirmed MPD volume, independently of the
-ColoPlay speaker. Proportional LED feedback fills the ring using that same
-remote source. A disconnected/stale source or unavailable mixer shows `--`;
-it never fabricates zero. Playback shows state, track text and seek direction, with position on the
+shows a speaker icon, percentage and horizontal bar, independently of the
+ColoPlay speaker. Pending targets preview immediately; returned MPD volume
+reconciles the display without adding status text or moving its layout.
+Proportional LED feedback fills the ring using that same remote source.
+A disconnected/stale source shows the connecting icon; an unavailable mixer
+shows `--` and an empty bar, never a fabricated zero. Request IDs, pending state
+and outcomes remain in Device diagnostics; volume command transitions also
+appear in the web log. Playback shows state, track text and seek direction, with position on the
 configurable LED ring. Metadata uses an embedded 16 px Noto Sans JP bitmap font covering 16,732
 characters, including Japanese kana/kanji, Latin and supported CJK extensions.
 Unsupported characters use `?`; emoji and Korean coverage are not promised.
@@ -72,16 +78,25 @@ An explicit 1/64 or 1/16 action selects that grid for the command, without
 changing Tab5's saved step setting. **Host step** follows Tab5's current 16/64
 setting. Each command snaps the current normalized floating-point volume to
 that grid, then applies whole detents. Tab5 and ColoPlay retain exact 1/16 and
-1/64 fractions for confirmed state and local previews. Only MPD's `setvol`
-argument rounds to an integer percentage. Tab5 retains the fractional target
-when the server echoes that rounded value, and adopts external server changes
-when their percentage differs. For example, one 1/64 step is internally
-0.015625 (1.5625%), even though MPD receives `setvol 2`.
+1/64 fractions for confirmed state and local previews. With
+[Tracks `628ee5b`](https://github.com/rGnng/tracks/commit/628ee5b), Tab5 sends
+fractional percentages and parses decimal status replies. One 1/64 step is
+internally 0.015625 (1.5625%); MPD receives `setvol 1.5625`. External server
+changes remain authoritative. Explicit invalid-argument replies from older
+integer-only servers select a rounded retry until reconnect.
 MPD `-1` means no mixer; mute uses Tab5's existing MPD mute behavior.
 
+In Tracks' system-volume mode, feedback reads the macOS output device's actual
+Core Audio scalar. The device can return a value between the requested grid
+positions: a 25% preview was observed to confirm as 25.3953%. ColoPlay replaces
+the local preview with that authoritative returned value, displaying 25.40%.
+This readback difference originates upstream of BLE; it is much larger than
+normal floating-point representation error.
+
 The shared `volume_grid_step` helper uses normalized floats in both firmware
-projects. Bluetooth volume LCD percentages show two decimal places; the ring
-uses the same fractional source, rounded only for its physical display.
+projects. Bluetooth volume LCD percentages show two decimal places; the bar
+rounds only to its 180 physical pixels. LED coverage retains fractions to
+permille precision before scaling each LED, including symmetric fills.
 
 Fast Forward and Rewind are stepped `seekcur +5` / `seekcur -5` operations,
 not changes in playback speed. Configure **Hold → Start** and **Hold then

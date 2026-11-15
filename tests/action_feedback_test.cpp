@@ -2,6 +2,7 @@
 #include "action_lighting.h"
 #include <cassert>
 #include <iostream>
+#include <limits>
 using namespace SceneSettings;
 int main(){
  ActionFeedback f;Action a;a.led=kFeedbackStatic;a.setColorRgb(0xFF0000);a.setLedBrightness(80);a.feedbackMs=1000;
@@ -44,5 +45,12 @@ int main(){
  assert(ActionLighting::resolve(cue,0,0xFF0000,0,21,true,0,9,true,50,RingFill::kBottomToTop).color==0);
  assert(ActionLighting::resolve(cue,0,0xFF0000,0,21,true,4,9,true,50,RingFill::kBottomToTop).color==0xFF0000);
  assert(ActionLighting::resolve(cue,0,0xFF0000,0,21,false,0,9,true,50,RingFill::kBottomToTop).color==resolve(cue).color);
+ // Preserve a 1/64 detent through the physical LED coverage boundary.
+ const float fractionPercent=100.0f/64;
+ const auto fine=ActionLighting::resolve(cue,0,0xFF0000,0,21,true,0,9,true,fractionPercent);
+ const int fineCoverage=RingFill::coverage(16,0,9);
+ assert(fine.color==DemoLevels::scaleRgb(0xFF0000,(fineCoverage*255+500)/1000));
+ assert(fine.color!=ActionLighting::resolve(cue,0,0xFF0000,0,21,true,0,9,true,2).color);
+ assert(!ActionLighting::resolve(cue,0,0xFF0000,0,21,true,0,9,true,std::numeric_limits<float>::quiet_NaN()).applied);
  std::cout<<"PASS independent key/ring targets, brightness, deadlines, inheritance, combinations, screen, rollover and rendered colors\n";
 }

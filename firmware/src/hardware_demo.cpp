@@ -17,6 +17,7 @@
 #include "idle_timer.h"
 #include "bluetooth_service.h"
 #include "volume_grid.h"
+#include "volume_display.h"
 #include "playback_ring.h"
 #include "playback_assets.h"
 #include "bitmap_font.h"
@@ -274,10 +275,19 @@ void render(uint32_t now) {
       const auto s=BluetoothService::snapshot();
       gCanvas.setTextDatum(MC_DATUM);gCanvas.setTextColor(TFT_WHITE,kBackground);
       if(!s.fresh||!s.available){bluetoothConnecting();break;}
-      gCanvas.drawString("Bluetooth volume",120,54,2);
-      const float value=s.pending&&s.preview>=0?s.preview:s.volume;
-      gCanvas.setTextSize(2);gCanvas.drawString(s.available&&value>=0?String(value*100.0f,2)+"%":"--",120,115,4);gCanvas.setTextSize(1);
-      gCanvas.drawString(s.volume<0?"Mixer unavailable":s.pending?"Pending":s.result==CP_UNSUPPORTED?"Unsupported":s.result==CP_BUSY?"Busy":s.result==CP_FAILED?"Failed":"Confirmed",120,168,2);
+      const float value=VolumeDisplay::value(s.fresh,s.available,s.pending,s.volume,s.preview);
+      // Fixed geometry keeps command acknowledgements from shifting the layout.
+      gCanvas.drawXBitmap(104,55,SceneIcons::kVolumeUp32,32,32,TFT_WHITE);
+      gCanvas.drawString(value>=0?String(value*100.0f,2)+"%":"--",120,108,4);
+      constexpr int x=30,y=135,width=180,height=20;
+      gCanvas.fillRoundRect(x,y,width,height,10,gCanvas.alphaBlend(45,TFT_WHITE,kBackground));
+      const int filled=VolumeDisplay::pixels(value,width);
+      if(filled){
+        // Clip a full rounded bar so even a 1/64 step remains visible.
+        gCanvas.setViewport(x,y,filled,height);
+        gCanvas.fillRoundRect(0,0,width,height,10,TFT_WHITE);
+        gCanvas.resetViewport();
+      }
       break;
     }
     case SceneSettings::kBluetoothPlaybackScreen: {
@@ -305,7 +315,8 @@ void animateLeds(uint32_t now) {
   if (gLedTest && static_cast<int32_t>(now - gLedTestUntil) >= 0) gLedTest = 0;
   const auto feedback = SceneService::feedback();
   const auto remote=BluetoothService::snapshot();
-  const int remotePercent=volume_percent(remote.pending&&remote.preview>=0?remote.preview:remote.volume);
+  const float remoteVolume=VolumeDisplay::value(remote.fresh,remote.available,remote.pending,remote.volume,remote.preview);
+  const float remotePercent=remoteVolume<0?-1.0f:remoteVolume*100.0f;
   const int progress=PlaybackRing::progress(remote.fresh&&remote.available&&remote.positionValid,remote.playback,remote.positionMs,remote.durationMs);
   const auto ring = SceneSettings::resolveLighting(SceneService::lighting(true),gLighting.mode==LightingSettings::kStatic,gLighting.color);
   const auto keys = SceneSettings::resolveLighting(SceneService::lighting(false),gLighting.mode==LightingSettings::kStatic,gLighting.color);

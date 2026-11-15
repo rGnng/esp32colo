@@ -1,6 +1,6 @@
 # Desktop gadget guide
 
-Current baseline: **0.6.20-network-panel**. The gadget is configured through the **General**,
+Current baseline: **0.6.22-speaker-icon**. The gadget is configured through the **General**,
 **Scenes** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
 buttons are 14 px, with larger headings and log text. [API](api.md), [development](development.md), and
@@ -263,7 +263,10 @@ Adjustments take a signed per-step value; setters use an absolute percentage.
 Speaker actions control this gadget's ES8311 output, not the computer's volume.
 Bluetooth adds remote volume (host step, 1/64, 1/16), playback controls and HID
 keys. General contains enable/pair/forget controls. Bluetooth volume/playback
-screens and proportional volume ring feedback use returned MPD state. See the
+screens and proportional volume ring feedback use returned fractional MPD state.
+The volume screen shows a speaker icon, percentage and horizontal bar, with
+immediate local preview and authoritative host reconciliation. Pending/result
+details are available in Device diagnostics and the web log. See the
 [Tab5 integration guide](tab5-integration.md) for setup, mappings and limits.
 Serial companion actions remain deferred.
 

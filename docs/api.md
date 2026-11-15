@@ -445,10 +445,17 @@ own NVS namespace; no WiFi/scene/General settings are replaced.
 
 GET and POST return `enabled`, `ready`, `stored`, `connected`, `secured`,
 `extension`, `pairing_seconds`, `peer`, `advertising`, `fresh`, `available`,
-`volume`, `preview`, `playback`, `seek`, `request`, `result`, `pending`, `title`,
+`volume`, `preview`, `volume_fraction`, `preview_fraction`, `float_volume`,
+`playback`, `seek`, `request`, `result`, `pending`, `title`,
 `artist`, `track`, `elapsed_ms`, `duration_ms`, and bounded traffic counters.
-Unavailable volume is -1; unknown playback is 255. Preview is a pending grid
+`volume` and `preview` are percentages with up to four decimal places for web
+compatibility. Their `_fraction` counterparts are normalized 0..1 floats;
+`float_volume` indicates negotiated fractional feedback support. Unavailable
+volume/preview is -1; unknown playback is 255. Preview is a pending grid
 target, not reported MPD volume. Freshness expires after five seconds.
+The volume LCD omits transport labels and command outcomes. Those diagnostics
+remain here and in `/api/status`; volume command transitions are also recorded
+in the web log with normalized confirmed/preview values.
 Initialization diagnostics include `stage`, `last_boot_stage`, `last_boot_heap`
 and `error`; `last_panic` is null or a retained bounded panic record with core,
 exception, fault address, reason, `image_elf_sha256` and backtrace addresses.

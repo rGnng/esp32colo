@@ -34,6 +34,7 @@ std::atomic<bool> gDisconnect{false},gPersistPeer{false},gAdvertisingOn{false};u
 struct Out {uint8_t bytes[CP_BLE_BYTES];};QueueHandle_t gQueue=nullptr;
 bool gReleasing=false;uint32_t gReleaseAt=0;uint8_t gReleaseReport=0;
 uint32_t gRequestAt=0;
+uint16_t gLoggedVolumeRequest=0;int gLoggedVolumeResult=-1;
 char gText[2][64]={};
 uint32_t gSent=0,gDropped=0;std::atomic<uint32_t> gInvalid{0};
 uint8_t gReportMap[]={
@@ -142,6 +143,15 @@ void start(){
   stage(10);
 }
 void releaseHid(){uint8_t zero[8]={};if(gReleaseReport==1){gKeyboard->setValue(zero,8);gKeyboard->notify();}else{gConsumer->setValue(zero,2);gConsumer->notify();}gReleasing=false;}
+void logVolumeState(const Snapshot &s){
+  if(!s.connected){gLoggedVolumeRequest=0;gLoggedVolumeResult=-1;return;}
+  if(!s.request||(s.usage!=0xe9&&s.usage!=0xea)||
+     (s.request==gLoggedVolumeRequest&&s.result==gLoggedVolumeResult))return;
+  gLoggedVolumeRequest=s.request;gLoggedVolumeResult=s.result;
+  static const char *const results[]={"pending","accepted","applied","failed","no_change","unsupported","busy"};
+  DeviceLog::printf("[bluetooth] volume request=%u result=%s pending=%u confirmed=%.6f preview=%.6f\n",
+    unsigned(s.request),s.result>=0&&s.result<=CP_BUSY?results[s.result]:"unknown",unsigned(s.pending),s.volume,s.preview);
+}
 } // namespace
 void load(){if(gRtcMagic==0xb1e01690){gPreviousStage=gRtcStage;gPreviousHeap=gRtcHeap;}gOpen=gPrefs.begin("bluetooth",false);Settings saved;if(gOpen&&gPrefs.getBytesLength("settings")==sizeof(saved)&&gPrefs.getBytes("settings",&saved,sizeof(saved))==sizeof(saved)&&saved.version==1&&saved.enabled<=1){gSettings=saved;gStored=true;}gState.enabled=gSettings.enabled;}
 Snapshot snapshot(){
@@ -158,8 +168,10 @@ void tick(bool hardwareReady){
   if(gSettings.enabled&&!gStartAttempted)start();if(!gStarted)return;
   if(gDisconnect||(!gSettings.enabled&&snapshot().connected)){gDisconnect=false;gServer->disconnect(gConn);}
   if(gPersistPeer){portENTER_CRITICAL(&gMux);memcpy(gSettings.peer,gRemote,6);gPersistPeer=false;portEXIT_CRITICAL(&gMux);gStored=gOpen&&gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);gPairUntil=0;DeviceLog::println("[bluetooth] secure bonded peer connected");}
-  const auto s=snapshot();const bool advertise=gSettings.enabled&&!s.connected&&(pairing()||hasPeer());
-  if(s.pending&&uint32_t(millis()-gRequestAt)>5000){portENTER_CRITICAL(&gMux);gState.pending=false;gState.preview=-1;gState.result=CP_FAILED;portEXIT_CRITICAL(&gMux);}
+  auto s=snapshot();const bool advertise=gSettings.enabled&&!s.connected&&(pairing()||hasPeer());
+  if(s.pending&&uint32_t(millis()-gRequestAt)>5000){portENTER_CRITICAL(&gMux);gState.pending=false;gState.preview=-1;gState.result=CP_FAILED;portEXIT_CRITICAL(&gMux);s=snapshot();}
+  // Log command transitions on the main task, outside BLE callback locks.
+  logVolumeState(s);
   if(advertise&&!gAdvertisingOn){gAdvertising->start();gAdvertisingOn=true;}else if(!advertise&&gAdvertisingOn){gAdvertising->stop();gAdvertisingOn=false;}
   if(!s.connected||!s.secured){if(gQueue)xQueueReset(gQueue);gReleasing=false;return;}
   if(gReleasing){if(static_cast<int32_t>(millis()-gReleaseAt)>=0)releaseHid();else return;}
@@ -194,5 +206,5 @@ bool configure(WebServer &server,String &error){
   error="op must be enable, disable, pair, stop_pairing or forget";return false;
 }
 String statusJson(){const auto s=snapshot();char track[17];snprintf(track,sizeof(track),"%016llx",(unsigned long long)s.track);const int remaining=pairing()?int((gPairUntil-millis()+999)/1000):0;String out="{\"enabled\":"+String(s.enabled?"true":"false")+",\"ready\":"+String(s.ready?"true":"false")+",\"stored\":"+String(gStored?"true":"false")+",\"connected\":"+String(s.connected?"true":"false")+",\"secured\":"+String(s.secured?"true":"false")+",\"extension\":"+String(s.extension?"true":"false")+",\"pairing_seconds\":"+String(remaining)+",\"peer\":"+quote(hasPeer()?address(gSettings.peer).c_str():"");
- out+=",\"last_panic\":"+PanicCapture::json()+",\"error\":"+String(gStartError)+",\"stage\":"+String(gStartAttempted?gRtcStage:0)+",\"last_boot_stage\":"+String(gPreviousStage)+",\"last_boot_heap\":"+String(gPreviousHeap)+",\"track\":"+quote(track)+",\"advertising\":"+String(gAdvertisingOn?"true":"false")+",\"fresh\":"+String(s.fresh?"true":"false")+",\"available\":"+String(s.available?"true":"false")+",\"volume\":"+String(s.volume<0?-1.0f:s.volume*100.0f,4)+",\"volume_fraction\":"+String(s.volume,8)+",\"float_volume\":"+String(s.floatVolume?"true":"false")+",\"preview\":"+String(s.preview<0?-1.0f:s.preview*100.0f,4)+",\"playback\":"+String(s.playback)+",\"seek\":"+String(s.seek)+",\"request\":"+String(s.request)+",\"result\":"+String(s.result)+",\"pending\":"+String(s.pending?"true":"false")+",\"title\":"+quote(s.title)+",\"artist\":"+quote(s.artist)+",\"elapsed_ms\":"+String(s.elapsedMs)+",\"position_ms\":"+String(s.positionMs)+",\"position_valid\":"+String(s.positionValid?"true":"false")+",\"duration_ms\":"+String(s.durationMs)+",\"sent\":"+String(gSent)+",\"dropped\":"+String(gDropped)+",\"invalid\":"+String(gInvalid.load())+"}";return out;}
+ out+=",\"last_panic\":"+PanicCapture::json()+",\"error\":"+String(gStartError)+",\"stage\":"+String(gStartAttempted?gRtcStage:0)+",\"last_boot_stage\":"+String(gPreviousStage)+",\"last_boot_heap\":"+String(gPreviousHeap)+",\"track\":"+quote(track)+",\"advertising\":"+String(gAdvertisingOn?"true":"false")+",\"fresh\":"+String(s.fresh?"true":"false")+",\"available\":"+String(s.available?"true":"false")+",\"volume\":"+String(s.volume<0?-1.0f:s.volume*100.0f,4)+",\"volume_fraction\":"+String(s.volume,8)+",\"float_volume\":"+String(s.floatVolume?"true":"false")+",\"preview\":"+String(s.preview<0?-1.0f:s.preview*100.0f,4)+",\"preview_fraction\":"+String(s.preview,8)+",\"playback\":"+String(s.playback)+",\"seek\":"+String(s.seek)+",\"request\":"+String(s.request)+",\"result\":"+String(s.result)+",\"pending\":"+String(s.pending?"true":"false")+",\"title\":"+quote(s.title)+",\"artist\":"+quote(s.artist)+",\"elapsed_ms\":"+String(s.elapsedMs)+",\"position_ms\":"+String(s.positionMs)+",\"position_valid\":"+String(s.positionValid?"true":"false")+",\"duration_ms\":"+String(s.durationMs)+",\"sent\":"+String(gSent)+",\"dropped\":"+String(gDropped)+",\"invalid\":"+String(gInvalid.load())+"}";return out;}
 }

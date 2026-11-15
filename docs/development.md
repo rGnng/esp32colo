@@ -9,7 +9,54 @@ Bluetooth controls, pairing and the bidirectional media-state contract are in th
 
 ## Current verified release
 
-The current production firmware is **0.6.20-network-panel**, built from Network
+Current ColoPlay firmware is **0.6.22-speaker-icon**, based on `7ec2ef8` plus
+fractional volume rendering and diagnostic changes. The volume screen now uses
+a 32 px local Bootstrap volume-up bitmap in place of the malformed hand-drawn
+speaker. The additional glyph uses 128 bytes of flash and follows the existing
+sprite bitmap renderer. Its application-only OTA verified MD5
+`dfe06393686396a6d501d9fa17e10526` on `ota_app1`; hardware was ready, BLE fresh,
+settings unchanged and input/LED/audio errors zero. The image is 4,092,912 bytes
+with SHA-256 `4d84787a4aef5c06e03a8e70c9e728ae88f10ac9526f8f0ec3aed91d15c2f75b`.
+Both firmware environments built successfully; the generated 32 px bitmap was
+visually inspected. Evidence is in ignored `backups/volume-bar/speaker-icon/`.
+The volume screen contains
+only a speaker icon, percentage and horizontal bar. Pending/result labels stay
+in Device diagnostics and the web log. Fractional previews and confirmed values
+remain precise through bar-pixel and LED-permille conversion.
+
+The initial **0.6.21-volume-bar** OTA on **2026-11-15** verified MD5
+`480d2f58466c1ba10d7fea730b59aff7` on `ota_app0`, with hardware ready, recovery
+off, cleared boot attempts and fresh encrypted fractional BLE feedback. Scene
+order, definitions/bindings, active selection, General, brightness, WiFi, USB and
+clock settings matched their saved pre-update values. The 4,092,832-byte image
+has SHA-256 `4c6c5274bf7027d6cc9ae6c709d6a97a2bc1bb04d25d3ab1d98c734d362670cb`.
+Both firmware environments and the full host suite passed, including every
+1/16 and 1/64 bar position, preview reconciliation, stale/unavailable feedback
+and fractional LED coverage. Frozen images, sources and evidence are under
+ignored `backups/volume-bar/`.
+
+The live 5% volume stall exposed a second boundary in Tab5: integer `setvol`
+formatting and `atoi` status parsing. Tracks
+[`628ee5b`](https://github.com/rGnng/tracks/commit/628ee5b) supports decimal
+percentages in both directions. Tab5 now sends values such as `setvol 6.25`,
+parses fractional feedback, and preserves authoritative external changes.
+Integer-only servers retain a fallback after an explicit invalid-argument ACK.
+
+The accompanying Tab5 application is
+[`7860a0a`](https://github.com/rGnng/mpdtab5/commit/7860a0a), based on `7e1a8f9`
+with the MPD boundary fix and no UI or other transport changes. Its 2,880,912-byte image was OTA'd
+and its running ELF SHA-256 verified as
+`045ef555a9034871641967235a2a317dae091a644c1dde34a453ce91e8ae5198`.
+Its 100 MPD tests, 6 volume-control tests, ColoPlay driver fixture and 21 native
+UI CTests passed. Live saved configuration and MPD endpoint matched before/after;
+BLE reconnected and authoritative volume above 5% was observed (23.0702%).
+The user was actively turning the knob, so the verifier skipped additional
+volume commands. Live evidence does not assert exact physical mixer detents or
+automated display capture; host fixtures cover exact decimal wire/grid values.
+
+## Previous Network panel release
+
+The preceding production firmware was **0.6.20-network-panel**, built from Network
 panel changes on top of `27a8857`. General combines WiFi/USB status in a read-only
 Network panel, with separate modal editors and grouped settings below. The
 HTTP APIs, network settings formats, scene ordering, manual brightness, BLE and

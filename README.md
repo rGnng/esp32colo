@@ -13,11 +13,13 @@ development. The build target and default hostname remain `coloplay`.
 
 ## Current baseline
 
-Current firmware: **`0.6.20-network-panel`**. General now combines WiFi and USB
-status in one Network panel, with separate modal editors and grouped controls
-below. Saved scene order, manual brightness, symmetric ring fills, source-key
-lighting and searchable HID keys remain available. Tab5 uses its recorded BLE
-integration and existing MPD volume logic.
+Current firmware: **`0.6.22-speaker-icon`**. Tab5 volume feedback retains normalized
+fractions through local previews, the screen bar and proportional LED feedback.
+The volume screen shows a speaker icon, percentage and bar; command outcomes
+stay in Device diagnostics and the web log. General combines WiFi and USB
+status in one Network panel, with separate modal editors and grouped controls.
+Saved scene order, manual brightness, symmetric ring fills, source-key
+lighting and searchable HID keys remain available.
 Both devices use application-only OTA. Source/build identity, validation results
 and image fingerprints are in the
 [release record](docs/development.md#current-verified-release).
