@@ -136,9 +136,16 @@ void begin(Handler handler) {
   }
   const size_t bytes=gOpen?gPrefs.getBytesLength("settings"):0;
   if(bytes==sizeof(gSettings)&&gPrefs.getBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings)){
-    if(valid(gSettings)){gStored=true;return;}
+    if(valid(gSettings)){
+      gStored=true;
+      if(normalizeBluetoothVolumes(gSettings)){
+        gStored=gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);
+        if(!gStored)gError="could not persist volume direction bindings";
+      }
+      return;
+    }
     const bool sound=GeneralService::sceneChangeSound();
-    if(migrateV6(gSettings)||migrateV5(gSettings,sound)||migrateV4(gSettings,sound)||migrateV3(gSettings,sound)){gStored=gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);if(!gStored)gError="could not persist migrated scenes";return;}
+    if(migrateV6(gSettings)||migrateV5(gSettings,sound)||migrateV4(gSettings,sound)||migrateV3(gSettings,sound)){normalizeBluetoothVolumes(gSettings);gStored=gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);if(!gStored)gError="could not persist migrated scenes";return;}
   }
   // The two legacy layouts share one scratch area, avoiding permanent duplication.
   union Legacy { StoredV1 v1;StoredV2 v2;Legacy():v2(){} };
@@ -151,7 +158,7 @@ void begin(Handler handler) {
     new (&legacy.v1) StoredV1;
     migrated=gPrefs.getBytes("settings",&legacy.v1,sizeof(legacy.v1))==sizeof(legacy.v1)&&migrate(legacy.v1,gSettings,GeneralService::sceneChangeSound());
   }
-  if(migrated){gStored=gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);if(!gStored)gError="could not persist migrated scenes";return;}
+  if(migrated){normalizeBluetoothVolumes(gSettings);gStored=gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);if(!gStored)gError="could not persist migrated scenes";return;}
 
   gSettings=defaults();
   gStored=gOpen&&gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);
@@ -349,6 +356,7 @@ bool configure(WebServer &server,String &error) {
       if (server.hasArg(prefix+"color")&&!readColor(server.arg(prefix+"color"),rgb)) { error="color must be #RRGGBB"; return false; }
       a.setColorRgb(rgb);
       if (!validAction(gCandidate,a)) { error="invalid action value, scene target or proportional effect"; return false; }
+      if(a.type==kBluetoothVolume)a.value=a.value<0?-1:1;
     }
     int sourceInput=-1,sourceGesture=-1,createOnly=0;
     if (server.hasArg("source_input") || server.hasArg("source_gesture")) {

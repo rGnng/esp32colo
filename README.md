@@ -13,9 +13,12 @@ development. The build target and default hostname remain `coloplay`.
 
 ## Current baseline
 
-Current firmware: **`0.6.22-speaker-icon`**. Tab5 volume feedback retains normalized
-fractions through local previews, the screen bar and proportional LED feedback.
-The volume screen shows a speaker icon, percentage and bar; command outcomes
+Current firmware: **`0.6.26-volume-bar`**. Tab5 owns the selected volume scale:
+**1/16 Squared Curve**, **1/64 Squared Curve** (default), **2% Integer**, or
+**5% Integer**. ColoPlay synchronizes it over BLE and predicts immediate
+screen/ring response. Small curved hardware readback differences map back to
+the same displayed scale position. Commands remain Up/Down only.
+The volume screen shows a speaker icon and bar; command outcomes
 stay in Device diagnostics and the web log. General combines WiFi and USB
 status in one Network panel, with separate modal editors and grouped controls.
 Saved scene order, manual brightness, symmetric ring fills, source-key
@@ -65,8 +68,8 @@ exposed to light outside the case has not been established.
 Enable **General → Bluetooth**, start pairing, then scan/select **ColoPlay**
 on Tab5. A bonded BLE connection carries controls and authoritative MPD volume,
 Playing/Paused/Stopped, track metadata, seek direction and position feedback.
-The action editor groups Device and Bluetooth commands; volume supports host
-steps, **1/64** and **1/16**, with separate Bluetooth volume/playback screens and
+The action editor groups Device and Bluetooth commands; volume offers
+Up/Down commands using Tab5's configured grid, with separate volume/playback screens and
 proportional ring feedback. See [pairing, actions and limits](docs/tab5-integration.md).
 
 The installed **Tab5 BLE** scene supplies knob item navigation/Enter, Back and

@@ -1,9 +1,9 @@
 # Bluetooth controls and Tab5 feedback
 
-Current ColoPlay firmware: **0.6.22-speaker-icon**; its source/build identity
+Current ColoPlay firmware: **0.6.26-volume-bar**; its source/build identity
 is in the [release record](development.md#current-verified-release).
-Fractional-volume support follows Tab5 commit
-[`7860a0a`](https://github.com/rGnng/mpdtab5/commit/7860a0a), using matching
+Volume-scale support follows Tab5 commit
+[`80acc5d`](https://github.com/rGnng/mpdtab5/commit/80acc5de9439fda8e1da57e541adb66d2f1cc20a), using matching
 shared protocol and volume-grid headers. The original recorded Tab5 peer driver is
 [`79c5dac`](https://github.com/rGnng/mpdtab5/commit/79c5dacd1f38a955f3ea2a8abff5b719d5d616d3),
 built on [`a34fa8a`](https://github.com/rGnng/mpdtab5/commit/a34fa8a2c7547573f128b47061d7359f3f504a81).
@@ -42,7 +42,7 @@ Bluetooth actions. Serial is deferred; unavailable actions are not selectable.
 | Device Scenes | Next Scene, Previous Scene, Switch to Scene |
 | Device Display / Lighting | Screen/ring/button brightness, rainbow, static color |
 | Device Speaker / System | Local speaker volume, tone, sleep/wake, time sync |
-| Bluetooth Volume | Volume Up/Down, using host step, 1/64 or 1/16 |
+| Bluetooth Volume | Volume Up/Down; Tab5 selects its configured grid |
 | Bluetooth Playback | Play/Pause, Play, Pause, Stop, Previous Track, Next Track, Fast Forward, Rewind, Mute |
 | Bluetooth Keyboard | Keyboard HID usage and modifier mask |
 
@@ -53,12 +53,13 @@ platform virtual-key codes. See the shared protocol header for exact values.
 
 **Bluetooth volume** and **Bluetooth playback** are available as both idle
 screens and action screen effects; Clock and Blank remain available. Volume
-shows a speaker icon, percentage and horizontal bar, independently of the
-ColoPlay speaker. Pending targets preview immediately; returned MPD volume
-reconciles the display without adding status text or moving its layout.
+shows a speaker icon and horizontal bar, independently of the
+ColoPlay speaker. The screen and LEDs predict immediately using Tab5's
+synchronized grid. Actual mixer feedback remains separately available in
+diagnostics. Pending turns are reconciled by completed request ID.
 Proportional LED feedback fills the ring using that same remote source.
 A disconnected/stale source shows the connecting icon; an unavailable mixer
-shows `--` and an empty bar, never a fabricated zero. Request IDs, pending state
+shows an empty bar, never a fabricated zero. Request IDs, pending state
 and outcomes remain in Device diagnostics; volume command transitions also
 appear in the web log. Playback shows state, track text and seek direction, with position on the
 configurable LED ring. Metadata uses an embedded 16 px Noto Sans JP bitmap font covering 16,732
@@ -74,29 +75,65 @@ other keys/modifiers. These commands enter Tab5's existing input queue.
 
 ### Volume behavior
 
-An explicit 1/64 or 1/16 action selects that grid for the command, without
-changing Tab5's saved step setting. **Host step** follows Tab5's current 16/64
-setting. Each command snaps the current normalized floating-point volume to
-that grid, then applies whole detents. Tab5 and ColoPlay retain exact 1/16 and
-1/64 fractions for confirmed state and local previews. With
-[Tracks `628ee5b`](https://github.com/rGnng/tracks/commit/628ee5b), Tab5 sends
-fractional percentages and parses decimal status replies. One 1/64 step is
-internally 0.015625 (1.5625%); MPD receives `setvol 1.5625`. External server
-changes remain authoritative. Explicit invalid-argument replies from older
-integer-only servers select a rounded retry until reconnect.
-MPD `-1` means no mixer; mute uses Tab5's existing MPD mute behavior.
+ColoPlay sends only Volume Up/Down and detent count. Tab5's **Volume Scale**
+selects the control coordinate and absolute MPD target:
 
-In Tracks' system-volume mode, feedback reads the macOS output device's actual
-Core Audio scalar. The device can return a value between the requested grid
-positions: a 25% preview was observed to confirm as 25.3953%. ColoPlay replaces
-the local preview with that authoritative returned value, displaying 25.40%.
-This readback difference originates upstream of BLE; it is much larger than
-normal floating-point representation error.
+| Choice | Control positions | Raw MPD target for position `x` |
+|---|---|---|
+| 1/16 Squared Curve | `i / 16` | `x²` |
+| 1/64 Squared Curve (default) | `i / 64` | `x²` |
+| 2% Integer | 0%, 2%, 4%, …, 100% | `x` |
+| 5% Integer | 0%, 5%, 10%, …, 100% | `x` |
 
-The shared `volume_grid_step` helper uses normalized floats in both firmware
-projects. Bluetooth volume LCD percentages show two decimal places; the bar
-rounds only to its 180 physical pixels. LED coverage retains fractions to
-permille precision before scaling each LED, including symmetric fills.
+The integer profiles provide straight integer-percent targets for Linux/Windows
+and integer-only MPD servers. Switching profiles preserves the playing volume;
+it changes the readout mapping and subsequent commands. The existing saved
+`volume_steps` IDs 16/64 remain selected as the corresponding squared profile;
+new/missing configurations default to 64. IDs 2 and 5 select the integer profiles.
+
+Both devices share 154 compile-time float targets (616 bytes). Squared readback
+is mapped to the nearest lookup position before stepping; its displayed value
+is that position's control fraction. Integer profiles use directional snapping
+for external off-grid values: from 61%, 2% Integer goes up to 62% or down to 60%.
+Commands always use absolute `setvol`; every batched detent is counted.
+
+For example, displayed 25% in a squared profile sends raw `setvol 6.25`.
+A hardware return of 6.3488% maps back to the same displayed 25%. Actual raw
+feedback stays in diagnostics. The confirmed raw target is kept separately
+from its readback; external changes, missing mixer and MPD reconnect invalidate
+that reference. This avoids accumulating quantization offsets.
+
+[Tracks `628ee5b`](https://github.com/rGnng/tracks/commit/628ee5b) accepts decimal
+percentages. Older integer-only servers retain an explicit invalid-argument
+fallback, but the Integer profiles are the appropriate choice for their targets.
+MPD `-1` means no mixer. Mute retains the selected scale's saved restore behavior.
+
+### Responsive prediction
+
+Tab5 announces its four-profile scale setting during connection setup and refreshes it
+when settings change. With negotiated prediction support, volume feedback adds
+its confirmed logical grid reference and the last completed volume-command ID.
+ColoPlay waits for valid synchronization, then predicts each queued turn using
+the same directional grid arithmetic as Tab5. Commands remain direction/count
+only, with no step selector in the ColoPlay editor.
+
+A bounded queue retains unconfirmed turns. A reply retires commands through its
+snapshot's completion watermark and replays only newer turns. Accepted results
+do not complete commands; older snapshots cannot rewind newer feedback. A
+quantized readback is kept separate from its logical reference (for example,
+actual raw 6.3488%, target raw 6.25%, displayed 25%). This preserves consistent prediction through rapid
+reversals and host grid changes.
+
+Prediction stays visible while turning or awaiting confirmation. After all
+turns finish and input has been quiet for 150 ms, the display level blends to
+actual feedback over 100 ms. Disconnect, stale/missing state, rejection or a
+five-second timeout disables optimism until synchronization recovers. Peers
+without the new capability continue to use raw feedback only. Older prediction peers do not interpret the new scale IDs. This uses
+bounded static storage and no extra BLE packets or runtime asset work.
+
+Old ColoPlay bindings with ±16 or ±64 are normalized to ±1 on load/save, keeping
+their direction, sound, effects, duration and other scene settings. The web
+editor offers only Volume Up and Volume Down. The NVS v7 layout is unchanged.
 
 Fast Forward and Rewind are stepped `seekcur +5` / `seekcur -5` operations,
 not changes in playback speed. Configure **Hold → Start** and **Hold then
@@ -173,9 +210,10 @@ an MTU upgrade. All multibyte integers are little endian.
 
 Common header: version byte 0, kind byte 1, request ID bytes 2–3, session
 nonce bytes 4–7. Command bytes 8–15 contain usage, count, parameter and pulse
-duration as four uint16 values. With floating-point volume negotiated, volume
-commands also mirror the exact normalized step as little-endian IEEE-754
-binary32 in bytes 16–19; zero retains the legacy denominator-only encoding.
+duration as four uint16 values. New volume commands contain only the Up/Down
+usage and detent count: parameter is the fixed legacy host marker 1, duration
+and bytes 16–19 are zero. Tab5 accepts legacy step fields during rolling updates
+but ignores their grid selection.
 Release cancels custom
 seeking. Session checks and a bounded recent-request cache prevent duplicate
 controls and stale replies after reconnect. Queues are bounded; no old command
@@ -187,7 +225,11 @@ HELLO reports the native volume grid. Capability bit `CP_CAP_VOLUME_FLOAT`
 volume feedback. HELLO bytes 12–15 carry the normalized native step. A companion
 `CP_VOLUME_STATE` (kind 20) carries normalized float volume in bytes 8–11 and the
 request result in byte 12, using the same request ID/session as STATE. -1 means
-unavailable. New peers use this frame for volume and command outcomes; the
+unavailable. Negotiated `CP_CAP_VOLUME_PREDICT` plus `CP_CAP_VOLUME_SCALE` adds the scale ID in
+byte 13, last completed volume request ID in bytes 14–15, and the confirmed
+raw target (float, -1 when unanchored) in bytes 16–19. These fields describe
+the same published mixer snapshot, independently of the envelope's request ID.
+New peers use this frame for volume and command outcomes; the
 legacy STATE remains intact for playback/timing and older peers. All frames
 still fit the default 20-byte ATT payload, with full 32-bit elapsed/duration.
 
@@ -207,7 +249,7 @@ commands. Live volume and playback frames refresh at up to 20 fps on ColoPlay;
 Clock remains 5 fps. Incoming feedback does not wake a sleeping gadget.
 
 The existing MPD worker checks queued commands between roughly 100 ms wait
-chunks. Immediate volume preview and screen/ring feedback keep local response
+chunks. Returned volume and screen/ring feedback keep local response
 independent of that backend cadence. The requested BLE connection interval is
 7.5–15 ms; this is not an end-to-end latency measurement. Live API tests include
 HTTP-relay overhead and cannot establish physical button-to-screen latency.

@@ -16,7 +16,6 @@
 #include "general_service.h"
 #include "idle_timer.h"
 #include "bluetooth_service.h"
-#include "volume_grid.h"
 #include "volume_display.h"
 #include "playback_ring.h"
 #include "playback_assets.h"
@@ -273,12 +272,10 @@ void render(uint32_t now) {
     case SceneSettings::kClock: drawClock(); break;
     case SceneSettings::kBluetoothVolumeScreen: {
       const auto s=BluetoothService::snapshot();
-      gCanvas.setTextDatum(MC_DATUM);gCanvas.setTextColor(TFT_WHITE,kBackground);
       if(!s.fresh||!s.available){bluetoothConnecting();break;}
-      const float value=VolumeDisplay::value(s.fresh,s.available,s.pending,s.volume,s.preview);
+      const float value=VolumeDisplay::value(s.fresh,s.available,s.displayVolume);
       // Fixed geometry keeps command acknowledgements from shifting the layout.
       gCanvas.drawXBitmap(104,55,SceneIcons::kVolumeUp32,32,32,TFT_WHITE);
-      gCanvas.drawString(value>=0?String(value*100.0f,2)+"%":"--",120,108,4);
       constexpr int x=30,y=135,width=180,height=20;
       gCanvas.fillRoundRect(x,y,width,height,10,gCanvas.alphaBlend(45,TFT_WHITE,kBackground));
       const int filled=VolumeDisplay::pixels(value,width);
@@ -315,7 +312,7 @@ void animateLeds(uint32_t now) {
   if (gLedTest && static_cast<int32_t>(now - gLedTestUntil) >= 0) gLedTest = 0;
   const auto feedback = SceneService::feedback();
   const auto remote=BluetoothService::snapshot();
-  const float remoteVolume=VolumeDisplay::value(remote.fresh,remote.available,remote.pending,remote.volume,remote.preview);
+  const float remoteVolume=VolumeDisplay::value(remote.fresh,remote.available,remote.displayVolume);
   const float remotePercent=remoteVolume<0?-1.0f:remoteVolume*100.0f;
   const int progress=PlaybackRing::progress(remote.fresh&&remote.available&&remote.positionValid,remote.playback,remote.positionMs,remote.durationMs);
   const auto ring = SceneSettings::resolveLighting(SceneService::lighting(true),gLighting.mode==LightingSettings::kStatic,gLighting.color);
@@ -391,10 +388,10 @@ int applyAction(const SceneSettings::Action &a, int repetitions) {
     case kSync: ClockService::requestSync(); break;
     case kTone: break; // SceneService applies the per-action sound switch.
     case kBluetoothVolume: {
-      const auto s=BluetoothService::snapshot();const int denominator=abs(a.value);const int usage=a.value>0?0xe9:0xea;
-      if(s.extension)BluetoothService::send(CP_VOLUME,usage,repetitions,denominator);
-      else for(int n=0;n<repetitions;++n)if(!BluetoothService::send(CP_VOLUME,usage,1,denominator))break;
-      const auto after=BluetoothService::snapshot();result=volume_percent(after.preview>=0?after.preview:after.volume);break;
+      const auto s=BluetoothService::snapshot();const int usage=a.value>0?0xe9:0xea;
+      if(s.extension)BluetoothService::send(CP_VOLUME,usage,repetitions);
+      else for(int n=0;n<repetitions;++n)if(!BluetoothService::send(CP_VOLUME,usage,1))break;
+      result=VolumeDisplay::percent(BluetoothService::snapshot().displayVolume);break;
     }
     case kBluetoothMedia:
       if(a.target==2)BluetoothService::send(CP_RELEASE,a.value,1);

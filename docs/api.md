@@ -445,26 +445,35 @@ own NVS namespace; no WiFi/scene/General settings are replaced.
 
 GET and POST return `enabled`, `ready`, `stored`, `connected`, `secured`,
 `extension`, `pairing_seconds`, `peer`, `advertising`, `fresh`, `available`,
-`volume`, `preview`, `volume_fraction`, `preview_fraction`, `float_volume`,
+`volume`, `volume_fraction`, `float_volume`,
 `playback`, `seek`, `request`, `result`, `pending`, `title`,
 `artist`, `track`, `elapsed_ms`, `duration_ms`, and bounded traffic counters.
-`volume` and `preview` are percentages with up to four decimal places for web
-compatibility. Their `_fraction` counterparts are normalized 0..1 floats;
-`float_volume` indicates negotiated fractional feedback support. Unavailable
-volume/preview is -1; unknown playback is 255. Preview is a pending grid
-target, not reported MPD volume. Freshness expires after five seconds.
-The volume LCD omits transport labels and command outcomes. Those diagnostics
-remain here and in `/api/status`; volume command transitions are also recorded
-in the web log with normalized confirmed/preview values.
+`volume` is a percentage with up to four decimal places; `volume_fraction` is
+the normalized 0..1 value. `float_volume` indicates negotiated fractional
+feedback support. Unavailable volume is -1; unknown playback is 255. Freshness
+expires after five seconds. Since 0.6.24, `volume_steps`, `volume_prediction`,
+`prediction_ready`, `predicting`, `volume_pending`, `volume_completed`,
+`grid_target`, `preview_fraction` and `display_volume_fraction` expose the
+negotiated prediction state. Grid target and preview use normalized 0..1 floats
+with -1 for unavailable; display volume includes the final settle animation.
+`volume_steps` retains the legacy field name but carries a scale ID: 16/64 for
+squared curves, 2/5 for linear integer-percent profiles. `volume_scale` is its
+read-only label received from Tab5. `grid_target` and `preview_fraction` are raw
+MPD scalars; `display_volume_fraction` uses the selected control coordinate.
+`volume` / `volume_fraction` always remain actual raw host readback. Request/result
+and prediction details stay in diagnostics rather than the LCD.
 Initialization diagnostics include `stage`, `last_boot_stage`, `last_boot_heap`
 and `error`; `last_panic` is null or a retained bounded panic record with core,
 exception, fault address, reason, `image_elf_sha256` and backtrace addresses.
 
 Bluetooth binding parameters:
 
+Legacy ±16/±64 volume values are accepted and normalized to their sign; other
+action fields and the NVS record layout are preserved.
+
 | Type | value | target |
 |---|---|---|
-| `bluetooth_volume` | ±1 host step, ±16 selects 1/16, ±64 selects 1/64 | 0 |
+| `bluetooth_volume` | +1 Volume Up, -1 Volume Down; Tab5 owns the grid | 0 |
 | `bluetooth_media` | Consumer usage: Play 176, Pause 177, Fast Forward 179, Rewind 180, Next 181, Previous 182, Stop 183, Play/Pause 205, Mute 226 | 0 pulse/tap, 1 start seeking, 2 stop seeking; nonzero only for Forward/Rewind |
 | `bluetooth_key` | Keyboard usage 1–231 | Modifier mask 0–255 |
 

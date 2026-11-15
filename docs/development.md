@@ -9,7 +9,108 @@ Bluetooth controls, pairing and the bidirectional media-state contract are in th
 
 ## Current verified release
 
-Current ColoPlay firmware is **0.6.22-speaker-icon**, based on `7ec2ef8` plus
+**0.6.25-volume-scales** adds four host-owned profiles: **1/16 Squared Curve**,
+**1/64 Squared Curve** (default), **2% Integer** and **5% Integer**. Tab5's native
+and web settings persist the choice in the existing `volume_steps` field.
+ColoPlay receives the scale on connect and during updates over BLE, and keeps
+only Up/Down actions in its editor. `CP_CAP_VOLUME_SCALE` prevents older peers
+from interpreting curved IDs as their old linear grids.
+
+Both devices share 154 constant targets (616 bytes), with binary-search inverse
+mapping and no runtime square root/logarithm. Squared control position `x`
+requests raw MPD scalar `x²`; quantized feedback maps to the nearest logical
+lookup position. Integer profiles request whole 2% or 5% increments and retain
+linear readback. Raw values remain separate in diagnostics. Tab5's bar,
+ColoPlay's percentage/ring and local prediction use the selected control scale.
+
+Application-only OTA on **2026-11-15** verified ColoPlay MD5
+`ec697b02d0e8803e89b9c9abcdb72565` on `ota_app0`; the 4,097,072-byte image has
+SHA-256 `86cefd12df997058f478558d239895a3070213639f4f897068ff1c87d9c09d1c`.
+The 2,885,344-byte Tab5 application verified running ELF SHA-256
+`ff8d0e65d739760ce8ecd418658e95951cf83d530d5c6aca91676210f0da8c68`.
+Frozen images, source and before/after evidence are in ignored `backups/volume-scales/`.
+
+Both ColoPlay environments and its host suite passed. Tab5 passed 101 MPD tests,
+8 scale/volume tests, the extended/legacy BLE fixture and 21 rebuilt native UI
+CTests. Coverage includes every table position in all profiles, all observed
+128-level squared-device readbacks, raw/display separation, integer wire
+commands, defaults, four-option native/touch/web selection, delayed replies and
+profile changes. Live checks selected all four profiles over BLE, matched both
+devices' display coordinates, and restored the original selection. Raw audio
+volume was unchanged at 18.7550%; unrelated settings/scenes were preserved.
+Device-served desktop/mobile editor checks made no writes and had no JS errors.
+
+## Previous prediction release
+
+**0.6.24-volume-prediction** restores immediate screen/ring prediction using
+Tab5's announced native grid and confirmed logical target. Commands remain
+Up/Down only. Negotiated volume frames carry actual volume, target, native
+step count and the completed-volume-request watermark in the same 20 bytes.
+ColoPlay retains pending turns, rejects older snapshots, and replays newer turns
+on each confirmed base. The implementation uses bounded static storage.
+
+Application-only OTA on **2026-11-15** verified ColoPlay MD5
+`ec0a0a1b56b03a74e44aa789c390c0d2` on `ota_app1`; the 4,095,712-byte image has
+SHA-256 `6627d74267c346e211047bfe07047fe3e7066c89a346b53a6f865133958582a8`.
+The 2,881,696-byte Tab5 application verified ELF SHA-256
+`aa0ca0bab13ad20e791047b915ec9f7942a575dd578edc7a517d9a96e4153058`.
+Hardware was ready, boot attempts cleared, recovery off and prediction
+negotiated. Saved configuration and scene bindings were preserved. Evidence,
+source snapshots and frozen images are under ignored `backups/volume-prediction/`.
+
+Both ColoPlay builds and its host suite passed, including prediction replay,
+late/accepted replies, grid changes, rejection, timeout, capacity and ID/time
+wrap. Tab5 passed 103 MPD tests, 9 grid tests, the extended/legacy BLE fixture
+and 21 native UI CTests. Live checks changed the native grid 64 → 16 → 64,
+verified prediction in pending logs before BLE notification, checked repeated
+reversals, and restored the original step and volume. Device-served desktop and
+mobile editor checks made no writes and reported no JavaScript errors.
+
+The deployed display policy holds prediction until input is quiet for 150 ms
+and commands complete, then blends to actual readback over 100 ms. User testing
+identified a visible correction from 28.125% to hardware readback 27.8319%.
+The request-90 log confirms prediction 0.281250 and actual 0.278319 with all
+turns completed. This correction comes from the display settling policy;
+the host logical grid target and raw mixer readback are separate values.
+
+## Previous host-volume release
+
+**0.6.23-host-volume** moves all volume-grid decisions to Tab5. ColoPlay sends
+Up/Down plus detent count and renders actual BLE feedback without prediction.
+The web editor has only those two choices. Existing ±16/±64 action values are
+normalized to ±1 in the unchanged v7 NVS layout; the other action bytes, scene
+order/selection and General/network/brightness settings are preserved.
+
+Tab5 polls MPD before each volume command and sends absolute `setvol` targets
+at the nearest grid point in the requested direction. At an exact point it
+moves one point; batches include every detent. The last requested target is
+tracked separately from its first actual readback within half a grid step.
+Equal readbacks retain that reference; external changes, missing mixer and
+MPD reconnect discard it, and a changed grid uses the actual level. BLE always
+returns actual volume, including integer-only-server fallback.
+
+Application-only OTA on **2026-11-15** verified ColoPlay MD5
+`ebd43d6df375afaf9b67b316bd439fb3` on `ota_app0`, hardware ready, recovery off,
+cleared boot attempts, fresh encrypted BLE and zero input/LED/audio errors.
+The 4,092,464-byte image has SHA-256
+`fca0d0bc50bdb342f04bdb81111c4ae5d9112ee35cae992b2f4db2586e9baa05`.
+The accompanying 2,881,568-byte Tab5 application verified ELF SHA-256
+`e03cd3fd693aa7a15b5d6cfd84728c7671c20a82838625757d7793c9f26fcece`.
+Source bases are ColoPlay `b6df08f` and Tab5 `7860a0a` plus the host-volume changes.
+Frozen images/source and before/after evidence are in ignored `backups/host-volume/`.
+
+Both ColoPlay builds, its host suite, 102 MPD tests, 9 grid/volume tests, the
+ColoPlay BLE driver fixture and 21 rebuilt native UI CTests passed. Desktop and
+touch browser fixtures cover legacy draft normalization and direction-only
+saving. Live checks verified the expected NVS normalization, preservation of
+all other settings, and MPD/BLE agreement. API-triggered reversals using the existing bindings
+returned exactly to their starting level: 4.5198% → 6.3488% → 7.5950% → 6.3488%
+→ 4.5198%, followed by two more stable up/down cycles. Readbacks reflect actual
+hardware quantization; the probe restored the starting level.
+
+## Previous volume-screen release
+
+The preceding volume-screen release was **0.6.22-speaker-icon**, based on `7ec2ef8` plus
 fractional volume rendering and diagnostic changes. The volume screen now uses
 a 32 px local Bootstrap volume-up bitmap in place of the malformed hand-drawn
 speaker. The additional glyph uses 128 bytes of flash and follows the existing
@@ -168,8 +269,8 @@ MD5 `e9a9c17bf4b88ed4e3adfe53a58f1d71`; its evidence remains under
 
 | File / area | Responsibility |
 |---|---|
-| `firmware/src/bluetooth_service.cpp` | Bonded HID/custom GATT transport, bounded queues, preview and returned remote state |
-| `firmware/include/coloplay_ble_protocol.h`, `volume_grid.h` | Shared 20-byte wire contract and Tab5 volume-grid arithmetic |
+| `firmware/src/bluetooth_service.cpp` | Bonded HID/custom GATT transport, bounded queues and returned remote state |
+| `firmware/include/coloplay_ble_protocol.h`, `volume_grid.h`, `volume_prediction.h`, `volume_display.h` | Shared wire/grid contract, bounded synchronized prediction and display rendering |
 | `firmware/src/panic_capture.cpp` | Retained bounded panic diagnosis and crashing ELF identity across reset |
 | `firmware/src/main.cpp` | Startup, WiFi/NVS, shared HTTP routes, serial commands, OTA and recovery orchestration |
 | `firmware/src/hardware_demo.cpp` | Clock/Bluetooth rendering and scene overlays, inactivity sleep, local action dispatch, manual lighting and supply telemetry |

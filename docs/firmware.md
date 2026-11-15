@@ -1,6 +1,6 @@
 # Desktop gadget guide
 
-Current baseline: **0.6.22-speaker-icon**. The gadget is configured through the **General**,
+Current baseline: **0.6.26-volume-bar**. The gadget is configured through the **General**,
 **Scenes** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
 buttons are 14 px, with larger headings and log text. [API](api.md), [development](development.md), and
@@ -261,11 +261,18 @@ The command selector groups Device actions by purpose and adds Bluetooth control
 
 Adjustments take a signed per-step value; setters use an absolute percentage.
 Speaker actions control this gadget's ES8311 output, not the computer's volume.
-Bluetooth adds remote volume (host step, 1/64, 1/16), playback controls and HID
+Bluetooth adds remote Volume Up/Down, playback controls and HID
 keys. General contains enable/pair/forget controls. Bluetooth volume/playback
 screens and proportional volume ring feedback use returned fractional MPD state.
-The volume screen shows a speaker icon, percentage and horizontal bar, with
-immediate local preview and authoritative host reconciliation. Pending/result
+The volume screen shows a speaker icon and horizontal bar, with
+immediate prediction using the step and grid reference synchronized from Tab5.
+Pending turns are reconciled by request ID; after turning stops, feedback
+settles smoothly to the actual mixer level. Tab5 sends absolute MPD
+`setvol` targets. Its Volume Scale offers 1/16 Squared Curve, 1/64 Squared Curve
+(default), 2% Integer and 5% Integer. ColoPlay receives the selection over BLE;
+the screen contains no numeric percentage. Squared readback maps to the same
+logical lookup position, preventing small quantization changes from bouncing
+the displayed value. Existing fine/coarse bindings retain their direction. Pending/result
 details are available in Device diagnostics and the web log. See the
 [Tab5 integration guide](tab5-integration.md) for setup, mappings and limits.
 Serial companion actions remain deferred.

@@ -148,6 +148,17 @@ inline bool valid(const Stored &s) {
   return true;
 }
 // Validate the complete legacy record before replacing the caller's settings.
+// Preserve the v7 storage layout and every other action/scene byte.
+inline bool normalizeBluetoothVolumes(Stored &settings){
+  if(!valid(settings))return false;
+  bool changed=false;
+  for(auto &binding:settings.bindings)for(int i=0;i<binding.count;++i){
+    auto &a=binding.actions[i];
+    if(a.type==kBluetoothVolume){const int direction=a.value<0?-1:1;
+      if(a.value!=direction){a.value=direction;changed=true;}}
+  }
+  return changed;
+}
 inline bool migrateV6(Stored &settings){
   if(settings.version!=6)return false;
   for(const auto &b:settings.bindings)if(b.count){

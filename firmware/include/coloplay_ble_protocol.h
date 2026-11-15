@@ -14,7 +14,7 @@
 enum {CP_BLE_VERSION=1,CP_MEDIA=1,CP_VOLUME=2,CP_KEY=3,CP_RELEASE=4,
       CP_HELLO=16,CP_STATE=17,CP_TEXT=18,CP_TRACK=19,CP_VOLUME_STATE=20};
 enum {CP_PENDING=0,CP_ACCEPTED=1,CP_APPLIED=2,CP_FAILED=3,CP_NO_CHANGE=4,CP_UNSUPPORTED=5,CP_BUSY=6};
-enum {CP_CAP_MEDIA=1,CP_CAP_VOLUME=2,CP_CAP_KEY=4,CP_CAP_STATE=8,CP_CAP_VOLUME_FLOAT=16};
+enum {CP_CAP_MEDIA=1,CP_CAP_VOLUME=2,CP_CAP_KEY=4,CP_CAP_STATE=8,CP_CAP_VOLUME_FLOAT=16,CP_CAP_VOLUME_PREDICT=32,CP_CAP_VOLUME_SCALE=64};
 static inline uint16_t cp_u16(const uint8_t *p){return (uint16_t)p[0]|((uint16_t)p[1]<<8);}
 static inline uint32_t cp_u32(const uint8_t *p){return (uint32_t)cp_u16(p)|((uint32_t)cp_u16(p+2)<<16);}
 static inline void cp_put16(uint8_t *p,uint16_t v){p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8);}
@@ -43,7 +43,11 @@ static inline void cp_header(uint8_t *p,uint8_t kind,uint16_t id,uint32_t sessio
 static inline bool cp_state_valid(const uint8_t *p,size_t n){
   /* Negotiated companion frame keeps legacy state and its full 32-bit times
    * intact at the default ATT MTU. Byte 12 carries the request result. */
-  if(cp_packet(p,n)&&p[1]==CP_VOLUME_STATE){float v=cp_float(p+8);return (v==-1.0f||(v>=0.0f&&v<=1.0f))&&p[12]<=CP_BUSY;}
+  if(cp_packet(p,n)&&p[1]==CP_VOLUME_STATE){
+    const float v=cp_float(p+8),target=cp_float(p+16);
+    return (v==-1.0f||(v>=0.0f&&v<=1.0f))&&p[12]<=CP_BUSY&&
+      (!p[13]||((p[13]==16||p[13]==64||p[13]==2||p[13]==5)&&(target==-1.0f||(target>=0&&target<=1))));
+  }
   if(!cp_packet(p,n)||(p[1]!=CP_STATE&&p[1]!=CP_HELLO))return false;
   const int volume=(int8_t)p[8];return volume>=-1&&volume<=100&&(p[9]<=2||p[9]==255)&&(p[10]&3)<=2&&!(p[10]&0x7c)&&p[11]<=CP_BUSY;
 }
