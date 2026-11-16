@@ -110,6 +110,32 @@ The device-served release record below remains the last verified OTA.
 
 ## Current verified release
 
+**0.6.31-cjk-subset**, source commit `264ffc6`, was application-only OTA'd on
+**2026-11-16** to `ota_app1`. The production image is **3,240,160 bytes**, leaving
+**1,478,432 bytes (1.41 MiB)** in each 4.5 MiB slot. MD5 is
+`ac9b23826c32caa572fd143b35621c38`; SHA-256 is
+`e5175f2743e3739aeb9cd27da5df8a0d0fb3fac903560bcd8859c7e5c79c178b`.
+The ELF SHA-256 embedded in the application is
+`6393b62d0ba0f73fce202892d82ca20f123d5b51b9ad2fd83943d7fb83f86ec2`.
+Frozen production BIN/ELF, build/test logs, bitmap comparison, settings snapshots,
+OTA log and manifest are in ignored `backups/cjk-subset/`.
+
+Both ColoPlay build environments and the full host suite passed. All requested
+Chinese/Korean codepoints are present, and all 7,908 retained Japanese-source
+glyphs match the original metrics and bitmaps exactly. Host tests validate all
+11,172 modern Hangul compositions, UTF-8 decoding, truncation at display-unit
+boundaries, font bounds and circular layout. All 120 local documentation links
+passed. Physical LCD glyph appearance has not been visually confirmed.
+
+The running device fingerprint and 10,702-glyph / 1,477,697-byte profile match
+the frozen image. After the normal boot-confirmation interval, hardware is ready,
+boot attempts are cleared and recovery mode is off. BLE is connected with fresh
+feedback; playback refresh sampled 19.8 fps. Scenes/bindings, active scene,
+playback appearance, General, WiFi, NTP/timezone and USB settings match their
+pre-OTA snapshots. No settings/schema/partition or Tab5 firmware changes were made.
+
+## Previous playback-state release
+
 **0.6.30-playback-states** was application-only OTA'd on **2026-11-15** to
 `ota_app0`. MD5 is `77d9193eecb61e90a94d62aaaed95027`; the 4,115,888-byte image
 has SHA-256 `a71fb84623369aad3e18a2e72873637985e2262a4f097a19076acdf04faf1c2c`.
