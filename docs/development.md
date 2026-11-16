@@ -7,6 +7,29 @@ requests in the [API](api.md), and build/update procedures in [Flashing](flash.m
 Bluetooth controls, pairing and the bidirectional media-state contract are in the
 [Tab5 integration guide](tab5-integration.md). Serial companion work remains deferred.
 
+## Common CJK playback font (0.6.31)
+
+**0.6.31-cjk-subset** stores 10,702 unique glyphs in 1,477,697 bytes, saving
+875,913 bytes versus the full Japanese profile. It combines a CP932-based common
+Japanese set and 32 observed supplements with the top 1,500 frequency-ranked
+GB2312 Han characters, 2,350 common Hangul syllables, and modern/compatibility
+Jamo. No Korean Hanja set is added. Japanese glyphs take priority for shared
+Unicode scalars; distinct simplified/traditional scalars remain distinct.
+
+The renderer composes modern Hangul L+V(+T) and precomposed LV+T during lookup,
+measurement and fitting. Ellipsis removes a complete display unit, preserving
+composed syllables. Other scripts are not normalized. Tests cover every modern
+Hangul syllable, incomplete/invalid sequences, narrow buffers, glyph bounds,
+all requested Chinese/Korean codepoints and Japanese-first source selection.
+
+A consistent full Tab5 library census on 2026-11-16 read 20,916 songs, 2,130
+albums, 1,090 artists, two playlists and 14 queue entries. The profile covers
+2,453 of 2,555 distinct metadata scalars after Hangul composition. The remaining
+102 include other scripts, rare ideographs, styled letters, emoji and invisible
+characters, which retain the `?` fallback. No raw library metadata is committed.
+See the [font repertoire, source pins and regeneration guide](../assets/fonts/noto-sans-jp/README.md).
+No NVS schema, BLE protocol or partition changes are introduced.
+
 ## Playback state implementation (0.6.30)
 
 **0.6.30-playback-states** replaces the shared lighting appearance/modifiers
@@ -449,7 +472,7 @@ MD5 `e9a9c17bf4b88ed4e3adfe53a58f1d71`; its evidence remains under
 | `firmware/include/scene_order.h` | Stable-ID scene permutation, append/move and ordered Next/Previous navigation |
 | `firmware/include/action_feedback.h`, `action_lighting.h` | Independent per-key/ring overlays, brightness and timed screen feedback |
 | `firmware/include/ring_fill.h`, `playback_clock.h` | Clockwise/symmetric coverage and shared smoothed playback position |
-| `firmware/include/bitmap_font.h`, `playback_assets.h` | Flash-backed Japanese playback font and local connection icon |
+| `firmware/include/bitmap_font.h`, `playback_assets.h` | Flash-backed CJK playback font and local connection icon |
 | `firmware/include/scene_settings.h` | Bounded scene/action schema, validation, protected Default and reference retargeting |
 | `firmware/include/gesture_engine.h` | Independent nonblocking click/hold/turn recognizers with cancellation |
 | `firmware/include/gesture_policy.h`, `chord_engine.h` | Binding-aware recognition timing and reusable held combination members |
@@ -1012,8 +1035,9 @@ the LCD progress bar. No emoji font or raster asset is added.
 
 ### Japanese playback font and compact layout (0.6.2)
 
-The playback screen uses an offline 16 px Noto Sans JP font, covering all 16,732
-characters mapped by the pinned Regular 2.004 Japanese subset OTF. The upstream
+The original 0.6.2 playback screen used all 16,732 mapped characters from the
+pinned Regular 2.004 Japanese subset OTF. The current 0.6.31 profile below
+replaces that full Japanese-only set with common Japanese/Chinese/Korean. The upstream
 unmodified source/license live in `assets/fonts/noto-sans-jp/`; its SHA-256 is
 `dff723ba59d57d136764a04b9b2d03205544f7cd785a711442d6d2d085ac5073`.
 The optional `scripts/generate_playback_font.py` uses Pillow 12.0.0, fontTools
@@ -1021,7 +1045,8 @@ The optional `scripts/generate_playback_font.py` uses Pillow 12.0.0, fontTools
 firmware builds do not need these packages or network access.
 
 The CPF1 font contains a sorted 16-byte metric record per codepoint and packed
-4-bit antialiased glyph coverage, totaling 2,353,610 flash bytes. Binary-search
+4-bit antialiased glyph coverage. The original profile totaled 2,353,610 flash
+bytes; the current profile totals 1,477,697 bytes. Binary-search
 lookup reads only required metrics/bitmaps from mapped flash. There is no font
 cache/all-glyph allocation in internal RAM or PSRAM. The renderer fits each line
 by measured advance, preserves UTF-8 boundaries, supports supplementary-plane

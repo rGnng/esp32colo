@@ -1,9 +1,18 @@
 {
   "source_sha256": "dff723ba59d57d136764a04b9b2d03205544f7cd785a711442d6d2d085ac5073",
   "pixel_size": 16,
-  "glyphs": 16732,
-  "font_bytes": 2353610,
-  "bitmap_bytes": 2085886,
+  "repertoire": "common-jp-top1500-gb2312-common-hangul-plus-library",
+  "source_glyphs": 16732,
+  "supplement_glyphs": 32,
+  "glyph_sources": {
+    "jp": 7908,
+    "sc": 376,
+    "kr": 2418
+  },
+  "glyph_priority": "jp, then kr for Hangul/Jamo or sc for other missing glyphs",
+  "glyphs": 10702,
+  "font_bytes": 1477697,
+  "bitmap_bytes": 1306453,
   "format": "CPF1 sorted 16-byte metrics + packed 4-bit coverage",
   "icon": "andrsrxn:bluetooth-connecting",
   "icon_pixels": 32,

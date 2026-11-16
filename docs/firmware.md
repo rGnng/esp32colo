@@ -1,6 +1,6 @@
 # Desktop gadget guide
 
-Current source baseline: **0.6.30-playback-states**. The gadget is configured
+Current source baseline: **0.6.31-cjk-subset**. The gadget is configured
 through the **General**, **Scenes**, **Bluetooth playback** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
 buttons are 14 px, with larger headings and log text. [API](api.md), [development](development.md), and
@@ -482,8 +482,9 @@ state behavior and shared appearance are configured in
 the bottom to the top, with partial LED brightness between steps. Action light
 effects take priority temporarily and return to playback lighting on expiry.
 The Bluetooth playback screen has a compact playback-state icon at the top and centered
-16 px title/artist lines, with no emoji/boxes. Japanese metadata is supported by
-an embedded Noto Sans JP bitmap font. A slim progress bar and time are below;
+16 px title/artist lines, with no emoji/boxes. Japanese, common Chinese and Korean metadata use
+an embedded Noto Sans JP/CJK bitmap font. Shared Han characters use the Japanese
+glyph form; distinct simplified/traditional characters stay separate. A slim progress bar and time are below;
 the LED ring can also show progress. By default unavailable feedback uses the local
 `andrsrxn:bluetooth-connecting` icon, without connection text.
 

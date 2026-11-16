@@ -6,7 +6,7 @@
 // Small flash-backed UTF-8 bitmap renderer. No font table is copied to RAM.
 namespace BitmapFont {
 inline uint32_t u32(const uint8_t *p){return uint32_t(p[0])|(uint32_t(p[1])<<8)|(uint32_t(p[2])<<16)|(uint32_t(p[3])<<24);}
-inline uint32_t next(const char *&text){
+inline uint32_t scalar(const char *&text){
   const auto *p=reinterpret_cast<const uint8_t*>(text);if(!*p)return 0;
   const uint8_t first=*p++;text=reinterpret_cast<const char*>(p);
   if(first<0x80)return first;
@@ -18,6 +18,20 @@ inline uint32_t next(const char *&text){
   for(unsigned i=0;i<count;++i){if(!*p){text=reinterpret_cast<const char*>(p);return 0;}if((*p&0xc0)!=0x80)return '?';value=(value<<6)|(*p++&63);}
   text=reinterpret_cast<const char*>(p);
   return value<minimum||value>0x10ffff||(value>=0xd800&&value<=0xdfff)?'?':value;
+}
+inline uint32_t next(const char *&text){
+  uint32_t value=scalar(text);
+  // Unicode algorithmic Hangul composition: L+V(+T), or precomposed LV+T.
+  // Other scripts and standalone Jamo remain unchanged.
+  if(value>=0x1100&&value<0x1113){
+    const char *probe=text;const uint32_t vowel=scalar(probe);
+    if(vowel>=0x1161&&vowel<0x1176){value=0xac00+((value-0x1100)*21+vowel-0x1161)*28;text=probe;}
+  }
+  if(value>=0xac00&&value<=0xd7a3&&(value-0xac00)%28==0){
+    const char *probe=text;const uint32_t tail=scalar(probe);
+    if(tail>=0x11a8&&tail<0x11c3){value+=tail-0x11a7;text=probe;}
+  }
+  return value;
 }
 struct Glyph {const uint8_t *pixels=nullptr;uint8_t width=0,height=0,advance=0;int8_t left=0,top=0;};
 class Font {
@@ -45,8 +59,10 @@ class Font {
     if(!clipped)return;
     const int dots=width("...");
     while(used&&(pixels+dots>maxWidth||used+3>=capacity)){
-      size_t start=used-1;while(start&&(uint8_t(out[start])&0xc0)==0x80)--start;
-      const char *last=out+start;pixels-=glyph(next(last)).advance;used=start;out[used]=0;
+      // Walk display units so ellipsis never leaves half a composed Hangul syllable.
+      const char *last=out;size_t start=0;uint32_t value=0;
+      while(*last){start=size_t(last-out);value=next(last);}
+      pixels-=glyph(value).advance;used=start;out[used]=0;
     }
     if(dots<=maxWidth&&used+3<capacity)std::memcpy(out+used,"...",4);
   }

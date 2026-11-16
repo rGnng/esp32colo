@@ -34,7 +34,7 @@ constexpr const char *kHostname = "coloplay";
 #ifdef COLOPLAY_USB_CONCURRENCY_TEST
 constexpr const char *kFirmwareVersion = "0.4.1-usb-concurrency-test";
 #else
-constexpr const char *kFirmwareVersion = "0.6.30-playback-states";
+constexpr const char *kFirmwareVersion = "0.6.31-cjk-subset";
 #endif
 constexpr const char *kPrefsNamespace = "wifi";
 constexpr uint32_t kWifiRetryMs = 10000;

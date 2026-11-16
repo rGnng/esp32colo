@@ -1,6 +1,6 @@
 # Bluetooth controls and Tab5 feedback
 
-Current ColoPlay source: **0.6.30-playback-states**; the last verified OTA
+Current ColoPlay source: **0.6.31-cjk-subset**; the last verified OTA
 is in the [release record](development.md#current-verified-release).
 Volume-scale support follows Tab5 commit
 [`80acc5d`](https://github.com/rGnng/mpdtab5/commit/80acc5de9439fda8e1da57e541adb66d2f1cc20a), using matching
@@ -62,9 +62,11 @@ A disconnected/stale source shows the connecting icon; an unavailable mixer
 shows an empty bar, never a fabricated zero. Request IDs, pending state
 and outcomes remain in Device diagnostics; volume command transitions also
 appear in the web log. Playback shows state, track text and seek direction, with position on the
-configurable LED ring. Metadata uses an embedded 16 px Noto Sans JP bitmap font covering 16,732
-characters, including Japanese kana/kanji, Latin and supported CJK extensions.
-Unsupported characters use `?`; emoji and Korean coverage are not promised.
+configurable LED ring. Metadata uses an embedded 16 px Noto Sans JP/CJK bitmap font with 10,702 unique
+characters: common Japanese, the top 1,500 GB2312 Han by frequency, 2,350 common
+Hangul syllables plus Jamo, Latin and audited library supplements. Shared Unicode
+Han uses one Japanese glyph. Decomposed modern Hangul is composed for display.
+Unsupported characters, including emoji and rarer syllables/ideographs, use `?`.
 
 A binding holds up to three ordered actions, including keyboard taps. This
 supports short sequences; a dedicated 16-step macro editor is not implemented.

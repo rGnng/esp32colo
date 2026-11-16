@@ -8,7 +8,7 @@ This reference describes the current implementation in
 [scene_service.cpp](../firmware/src/scene_service.cpp),
 [clock_service.cpp](../firmware/src/clock_service.cpp) and
 [usb_network.cpp](../firmware/src/usb_network.cpp).
-The current source is **0.6.30-playback-states**, including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
+The current source is **0.6.31-cjk-subset**, including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
 filled/unfilled ring colors.
 Deployment fingerprints for the last verified OTA are in the
 [release record](development.md#current-verified-release). Bluetooth's BLE wire
@@ -618,8 +618,11 @@ and timeout preferences. Older firmware cannot read these newer records.
 ## Japanese playback typography (0.6.2)
 
 No settings or NVS schema changes. `hardware.display` adds `playback_font`,
-`playback_font_glyphs` and `playback_font_bytes`. The embedded Noto Sans JP 16 px
-font contains 16,732 glyphs in 2,353,610 flash bytes. Sorted metrics and packed
+`playback_font_glyphs` and `playback_font_bytes`. The embedded 16 px font
+now contains 10,702 glyphs in 1,477,697 flash bytes (0.6.31 common Japanese,
+top-1,500 GB2312 Chinese and common Korean profile). `playback_font` retains
+the compatible label `Noto Sans JP 16`; the glyph/byte fields report the actual
+profile. Sorted metrics and packed
 4-bit coverage remain flash-backed; only visible glyph pixels are read. UTF-8
 fitting does not split multibyte characters, and unsupported codepoints use `?`.
 Unavailable Bluetooth feedback shows the locally bundled Iconify

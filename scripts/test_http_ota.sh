@@ -40,3 +40,4 @@ for scenario in save restore invalid unavailable migrate migrate-failure migrate
 python3 -m unittest discover -s tests -p 'test_usb_*.py' -v
 
 python3 -m unittest discover -s tests -p 'test_input_worker.py' -v
+python3 -m unittest discover -s tests -p 'test_font_subset.py' -v

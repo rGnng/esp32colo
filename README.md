@@ -13,7 +13,7 @@ development. The build target and default hostname remain `coloplay`.
 
 ## Current baseline
 
-Current firmware: **`0.6.30-playback-states`**. Tab5 owns the selected volume scale:
+Current firmware: **`0.6.31-cjk-subset`**. Tab5 owns the selected volume scale:
 **1/16 Squared Curve**, **1/64 Squared Curve** (default), **2% Integer**, or
 **5% Integer**. ColoPlay synchronizes it over BLE and predicts immediate
 screen/ring response. Small curved hardware readback differences map back to
@@ -84,7 +84,7 @@ proportional ring feedback. See [pairing, actions and limits](docs/tab5-integrat
 
 The installed **Tab5 BLE** scene supplies knob item navigation/Enter, Back and
 modifier-first Page Up/Down and previous/next-menu combinations. The same two
-buttons can perform different actions in reverse order. Playback uses a small playback-state icon, centered title/artist with a 16 px Japanese
+buttons can perform different actions in reverse order. Playback uses a small playback-state icon, centered title/artist with a 16 px Japanese/Chinese/Korean
 font, and a configurable LED-ring progress fill: clockwise or symmetric bottom to top. Connecting uses the
 locally bundled Iconify `andrsrxn:bluetooth-connecting` icon without text.
 General includes saved sound-effects volume for local tones and scene cues. Existing scenes and General settings remain intact.
