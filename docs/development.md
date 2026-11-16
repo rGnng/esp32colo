@@ -7,6 +7,60 @@ requests in the [API](api.md), and build/update procedures in [Flashing](flash.m
 Bluetooth controls, pairing and the bidirectional media-state contract are in the
 [Tab5 integration guide](tab5-integration.md). Serial companion work remains deferred.
 
+## Compact scene persistence (0.6.33)
+
+The first live navigation-scene creation exposed an NVS save failure with the
+fixed 3304-byte scene blob. Existing configuration stayed intact. Saves now
+encode that same byte representation with bounded LZ back-references (`CSR1`),
+including decoded length, encoding version and CRC32. The same NVS key is updated
+through `nvs_set_blob`/`nvs_commit`; it is never erased before replacement. The
+live 25-binding profile stores 455 bytes and survives a verified reboot.
+Decoded schema 8 and all 3304 bytes remain unchanged. Scratch space prefers PSRAM,
+with an internal-heap fallback, and is freed after the save/read.
+
+The decoder still reads uncompressed v1–v8 records through their existing paths.
+Compact reads validate bounds, complete stream consumption, CRC and scene schema
+before publishing settings. A failed compact read/allocation preserves the stored
+record. Diagnostic JSON includes record format and stored/raw byte counts; the
+web log records NVS results and free entries. Checks cover exact round trips,
+noise/repeated data, overlap, malformed/truncated/corrupt records and buffer
+bounds, including ASan/UBSan. Recovery firmware must understand `CSR1`.
+
+## Direct Tab5 navigation (0.6.32)
+
+**0.6.32-navigation** adds an opt-in Tab5 Navigation scene, configurable
+150–3000 ms hold thresholds and 200 ms hold repetition. The preset uses 350 ms
+for Buttons 2/3 paging. Single presses fire on release and are suppressed after
+a hold. Cancellation, scene epochs and raw releases stop physical-key repeat;
+missed ticks never cause a catch-up burst. Existing scenes are not rewritten.
+The retired USB-concurrency target, vendor-HID test hooks and experiment routes
+have been removed; production USB descriptors, modes and recovery remain intact.
+Scene schema 8 retains 3304 bytes, using three former reserved binding bytes;
+v7 migrates to the original 600 ms / non-repeating behavior. Earlier schemas
+continue through the same migration chain. The navigation screen is appended
+to the screen enum, preserving the existing numeric screen IDs.
+
+Tab5 captures its current view and focused text on the UI thread every 60 ms.
+Virtual-list selections and detail/queue tracks use metadata; generic controls
+use readable labels, excluding icon-only labels. No LVGL pointer crosses into
+BLE work. A one-entry mailbox coalesces rapid changes; changed snapshots wake
+the BLE event loop immediately, and acknowledged writes advance the stream.
+Focus feedback does not wait for the 250 ms housekeeping timer. Capability bit 128
+negotiates the extra stream without changing legacy media/volume layouts.
+Revisioned metadata plus 10-byte text fragments fit the default 20-byte ATT
+payload. The receiver commits complete snapshots, rejects malformed/stale/
+out-of-order fragments and expires after five seconds. A one-second heartbeat
+refreshes unchanged focus; a bounded BLE backlog preserves command/state traffic.
+
+ColoPlay shows view/focus/position, and context-menu commands when modal. On
+Now Playing it falls back to the configured playback appearance. Volume action
+feedback, lighting, overlays, sleep and unrelated Tab5 input handlers are
+preserved. The host validation includes protocol/producer fixtures, v7 migration,
+additive preset creation, repeated holds, all 21 native Tab5 UI CTests and browser
+checks at 320/375/1280 pixels. The broad Tab5 Python suite has the same 8 failed
+tests and 5 setup errors as untouched `d854616`; no new failures were found.
+The current live verification record is maintained below.
+
 ## Common CJK playback font (0.6.31)
 
 **0.6.31-cjk-subset** stores 10,702 unique glyphs in 1,477,697 bytes, saving
@@ -71,7 +125,8 @@ CDC-ACM Serial + CDC-ECM Network. Existing network-only settings gain ACM withou
 changing the 12-byte NVS record or saved addresses. Serial/JTAG settings remain.
 The software composite device uses PID 0x4004 to distinguish the changed USB
 interface set from the previous ECM-only PID 0x4002. The old optional HID/JTAG
-experiment keeps its own environment and PID; it is not the production image.
+experiment kept its own environment and PID at this stage; that target was
+removed in 0.6.32.
 
 The console proxy routes logs, status and recovery commands to hardware ACM or
 software ACM as appropriate. A static 8192-byte TX queue avoids blocking on a
@@ -109,6 +164,48 @@ reload, fixed title notifications and scene saves preserving the legacy style.
 The device-served release record below remains the last verified OTA.
 
 ## Current verified release
+
+**0.6.33-navigation-nvs** was application-only OTA'd on **2026-11-16** to
+`ota_app1`. The 3,248,048-byte image leaves **1,470,544 bytes
+(1.40 MiB)** per 4.5 MiB slot. MD5 is `cedcdda963408079c260ec0c396c470a`;
+SHA-256 is `55a17f77fa7c9f13f29d317384f2bf5ace0ba8b59915cde620e5dd5c925b49e3`. Its embedded ELF SHA-256 is
+`e107d3f9b3a50fb5a8b77d8ecdb730f968e9e06148615010047189b1925405a9`.
+
+The matching Tab5 application was OTA'd and verified by ELF SHA-256
+`dce72107fb57e5c062ce7cb493f7961f0a88e533c7ee3d48b1e5430bcc8ab0f8`. WiFi, SD and MPD are connected; saved Tab5 configuration
+matches the pre-OTA snapshot. No Tab5 C6, bootloader, partition or MPD control
+implementation changed. ColoPlay retains CDC-ACM Serial + USB JTAG and its saved
+network, General, clock, lighting and playback settings.
+
+The new **Tab5 Navigation** scene is appended and active, with 11 bindings. All
+previous scene/binding fields remain unchanged. Live saved-binding → BLE → Tab5
+checks cover view switching, knob focus movement, both page directions, context
+opening/selection/Back, and the Now Playing Queue shortcut. An isolated navigation
+run preserved playback state and volume. Physical hold/repeat timing has host
+coverage; virtual Run checks do not simulate GPIO timing.
+
+The first 0.6.32 save attempt exposed the large NVS record failure, fixed with
+compact persistence in 0.6.33. The real 3304-byte scene record now occupies **455
+bytes**, with successful NVS writes in the web log. A normal reboot restored the
+same scenes, bindings, order, active scene and encoded record. Hardware is ready,
+boot attempts are cleared, recovery mode is off, BLE feedback is fresh and LCD
+refresh sampled **19.6 fps**. The former USB test target, firmware hooks and
+routes are removed; the live experiment URL returns 404. The only build target
+is `coloplay`. A compatible, validated two-slot USB rescue bundle is at ignored
+`backups/recovery/`.
+
+The production build, full ColoPlay host suite, codec ASan/UBSan tests, Tab5
+GATT fixture and all 21 native UI CTests pass. Local fixture browser checks pass
+at 320/375/1280 pixels; device-served checks at 375/1280 pixels made no writes and
+had no JavaScript errors. The broader Tab5 Python suite retains the same 13
+pre-existing failures documented above.
+
+Frozen images/ELFs, settings snapshots, exact source patches and added source,
+OTA logs, live navigation steps, persistence/browser evidence and manifests are
+under ignored `backups/navigation/ota/`. Source bases are `e024b15` (ColoPlay)
+and `d854616` (Tab5), plus the navigation/cleanup/storage working-tree changes.
+
+## Previous CJK-subset release
 
 **0.6.31-cjk-subset**, source commit `264ffc6`, was application-only OTA'd on
 **2026-11-16** to `ota_app1`. The production image is **3,240,160 bytes**, leaving
@@ -498,6 +595,7 @@ MD5 `e9a9c17bf4b88ed4e3adfe53a58f1d71`; its evidence remains under
 | `firmware/include/scene_order.h` | Stable-ID scene permutation, append/move and ordered Next/Previous navigation |
 | `firmware/include/action_feedback.h`, `action_lighting.h` | Independent per-key/ring overlays, brightness and timed screen feedback |
 | `firmware/include/ring_fill.h`, `playback_clock.h` | Clockwise/symmetric coverage and shared smoothed playback position |
+| `firmware/include/navigation_feedback.h`, `tab5_navigation_profile.h` | Coherent remote focus assembly and additive direct-navigation preset |
 | `firmware/include/bitmap_font.h`, `playback_assets.h` | Flash-backed CJK playback font and local connection icon |
 | `scripts/generate_playback_font.py`, `playback_font_subset.py` | Hash-pinned font rasterization, common-language repertoires, shared-glyph priority and Hangul composition policy |
 | `scripts/audit_playback_font.py`, `assets/fonts/noto-sans-jp/` | Private snapshot coverage audit, anonymous codepoint lists, source pins, license and generated manifest |
@@ -594,6 +692,8 @@ The historical name `test_http_ota.sh` now runs the broader host regression suit
 | `bluetooth_protocol_test.cpp`, `bluetooth_hid_test.cpp` | BLE wire/usage validation and initialized GATT service ownership |
 | `log_buffer_test.cpp` | Bounded log storage, cursors and wrap/reset behavior |
 | `test_input_worker.py` | Production task boundary and timing traces, generation/overflow handling, encoder and held modifiers |
+| `scene_record_codec_test.cpp` | Lossless scene encoding, CRC, overlapping references, literal bounds, truncation/corruption rejection and exact byte preservation |
+| `navigation_feedback_test.cpp` | Revisioned focus fragments, UTF-8, expiry, stale/malformed packets, schema-7 migration and preserving existing scenes |
 | `gesture_engine_test.cpp` | Click counts, hold/release, modified turns, click suppression, debounce, independent inputs, cancellation and timer wrap |
 | `chord_engine_test.cpp` | Exact groups, repeated held-key combinations, binding-aware timing, superset arbitration, boot-held inputs and cancellation |
 | `idle_timer_test.cpp` | One-hour default, disable, timeout boundaries/reset, millis wrap, General v1 migration and numeric validation |
@@ -746,9 +846,10 @@ not a recovered board pinout. See [Espressif's USB device documentation](https:/
 The current firmware still provides CDC-ECM or Serial/JTAG modes; HID has not
 been added by this UI update.
 
-The opt-in [USB concurrency experiment](usb-concurrency-test.md) provides a
+The retired [USB concurrency experiment](usb-concurrency-test.md) provided a
 separate CDC-ECM/vendor-HID image, host JTAG checks and two-slot local recovery.
-It does not change the production USB modes.
+Its target and firmware hooks were removed in 0.6.32; the generic local recovery
+helper remains. It did not change the production USB modes.
 
 ### Per-scene lighting (0.4.2)
 

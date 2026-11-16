@@ -41,5 +41,13 @@ int main(){
  {Simulation s;GestureBindings b;b.physical[kKey2]=(1u<<kSingle)|(1u<<kDouble);s.engine.setBindings(b.physical);s.tap(kKey2);s.step(270);s.set(kKey2,true);s.step(5);s.set(kKey2,false);s.step(25);assert(s.events.size()==1&&s.events[0].gesture==kSingle);}
  // A genuinely late second click remains a separate single.
  {Simulation s;GestureBindings b;b.physical[kKey2]=(1u<<kSingle)|(1u<<kDouble);s.engine.setBindings(b.physical);s.tap(kKey2);s.step(281);s.tap(kKey2);s.step(300);assert(s.events.size()==2&&s.events[0].gesture==kSingle&&s.events[1].gesture==kSingle);}
- std::cout<<"PASS single/double/triple, hold/release, modified turns, click suppression, independent inputs, debounce, scene cancellation and timer wrap\n";
+ // Repeat starts at the configured threshold, stops on the raw release, and never catches up in a burst.
+ {Simulation s;GestureBindings b;b.physical[kKey2]=(1u<<kSingle)|(1u<<kHold);b.physicalHold[kKey2].ms=350;b.physicalHold[kKey2].repeat=true;s.engine.setBindings(b.physical);s.engine.setHolds(b.physicalHold);
+  s.set(kKey2,true);s.step(25);s.step(349);assert(s.events.empty());s.step(1);assert(s.events.size()==1&&s.events[0].gesture==kHold);
+  s.step(199);assert(s.events.size()==1);s.step(1);assert(s.events.size()==2);s.step(2000);assert(s.events.size()==3);
+  s.set(kKey2,false);s.step(24);assert(s.events.size()==3);s.step(1);s.step(500);assert(s.events.size()==3);
+  s.tap(kKey2);assert(s.events.size()==4&&s.events.back().gesture==kSingle);
+  s.set(kKey2,true);s.step(25);s.step(350);s.engine.cancel();s.step(1000);assert(s.events.size()==5);
+ }
+ std::cout<<"PASS clicks, configured hold/repeat, raw-release stop, cancellation, modified turns, debounce and timer wrap\n";
 }

@@ -14,7 +14,7 @@ class ChordEngine {
   void configure(uint16_t combinations,const GestureBindings &bindings=GestureBindings(GesturePolicy::kAll)) {
     combinations_=combinations;bindings_=bindings;
     uint8_t members=0;for(int group=3;group<16;++group){if(bindings_.policy(group)&&(combinations_&(1u<<group)))members|=group;for(int modifier=0;modifier<4;++modifier)if(bindings_.ordered[modifier][group])members|=1u<<modifier;}
-    singles_.setBindings(bindings_.physical,members);cancel();
+    singles_.setBindings(bindings_.physical,members);singles_.setHolds(bindings_.physicalHold);cancel();
   }
   void cancel() {
     singles_.cancel();window_=false;active_=pendingCount_=0;
@@ -89,7 +89,7 @@ class ChordEngine {
   GestureBindings bindings_{GesturePolicy::kAll};
   uint8_t previous_=0,union_=0,active_=0,pendingCount_=0,suppressedEdges_=0;
   bool armed_=true,window_=false,fullSeen_=false,broken_=false,held_=false,fired_=false;
-  uint32_t windowAt_=0,joinedAt_=0,brokenAt_=0;
+  uint32_t windowAt_=0,joinedAt_=0,brokenAt_=0,repeatAt_=0;
   bool first(int modifier,uint8_t mask)const {
     if(!(mask&(1u<<modifier)))return false;
     for(int key=0;key<4;++key)if(key!=modifier&&(mask&(1u<<key))&&
@@ -125,7 +125,9 @@ class ChordEngine {
     auto &click=clicks_[active_];const auto policy=bindings_.policy(active_);
     if(!fired_&&GesturePolicy::press(policy)){send(emit,active_,kSingle);fired_=true;}
     const uint32_t duration=(broken_?brokenAt_:now)-joinedAt_;
-    if(!held_&&!fired_&&GesturePolicy::hold(policy)&&duration>=GestureEngine::kHoldMs){held_=true;click.count=0;send(emit,active_,kHold);}
+    const auto hold=bindings_.hold(active_);
+    if(!held_&&!fired_&&GesturePolicy::hold(policy)&&duration>=hold.ms){held_=true;click.count=0;repeatAt_=now;send(emit,active_,kHold);}
+    else if(!broken_&&held_&&hold.repeat&&uint32_t(now-repeatAt_)>=200){repeatAt_=now;send(emit,active_,kHold);}
     if(broken_) {
       if(held_)send(emit,active_,kHoldRelease);
       else if(!fired_){click.upAt=now;++click.count;if(click.count==GesturePolicy::clicks(policy)){send(emit,active_,click.count-1);click.count=0;}}

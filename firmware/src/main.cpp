@@ -24,18 +24,13 @@
 #include "bluetooth_service.h"
 #include "usb_network.h"
 #include "usb_console.h"
-#include "usb_experiment.h"
 #include "web_ui.h"
 #include "web_assets.h"
 
 namespace {
 
 constexpr const char *kHostname = "coloplay";
-#ifdef COLOPLAY_USB_CONCURRENCY_TEST
-constexpr const char *kFirmwareVersion = "0.4.1-usb-concurrency-test";
-#else
-constexpr const char *kFirmwareVersion = "0.6.31-cjk-subset";
-#endif
+constexpr const char *kFirmwareVersion = "0.6.33-navigation-nvs";
 constexpr const char *kPrefsNamespace = "wifi";
 constexpr uint32_t kWifiRetryMs = 10000;
 
@@ -390,9 +385,6 @@ void setupHttp() {
     server.send(404, "text/plain", "not found\n");
   });
   HttpOta::setup(server, OTA_PASSWORD);
-#ifdef COLOPLAY_USB_CONCURRENCY_TEST
-  UsbNetwork::experimentSetup(server);
-#endif
   server.begin();
   DeviceLog::println("[http] server listening on port 80");
 }
@@ -535,9 +527,6 @@ void loop() {
   }
   server.handleClient();
   HttpOta::tick();
-#ifdef COLOPLAY_USB_CONCURRENCY_TEST
-  UsbNetwork::experimentTick();
-#endif
   ClockService::tick();
   if(!gArduinoOtaBusy&&!HttpOta::busy())SceneService::tick();
   UsbConsole::tick();

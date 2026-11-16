@@ -1,6 +1,6 @@
 # Bluetooth controls and Tab5 feedback
 
-Current ColoPlay source: **0.6.31-cjk-subset**; the last verified OTA
+Current ColoPlay source: **0.6.33-navigation-nvs**; the last verified OTA
 is in the [release record](development.md#current-verified-release).
 Volume-scale support follows Tab5 commit
 [`80acc5d`](https://github.com/rGnng/mpdtab5/commit/80acc5de9439fda8e1da57e541adb66d2f1cc20a), using matching
@@ -191,7 +191,33 @@ release → Stop**. Click/turn bindings can use a bounded pulse. Scene/config
 changes send Release; disconnect and a 10-second Tab5 lease also stop seeking.
 The custom seek state is separate from existing USB/D100H hold state.
 
-### Installed test profile
+### Direct navigation profile (0.6.32)
+
+With both applications updated, choose **Scenes → + Tab5 navigation** on
+ColoPlay, then **Activate scene**. The new scene appends without replacing the
+previous Tab5 BLE scene or any other settings. Knob turn/press navigates and
+selects, Button 1 goes Back, Buttons 2/3 switch views, Button 4 toggles the
+context menu. Holding Buttons 2/3 pages up/down from 350 ms, repeating every
+200 ms; release after paging does not switch views. Press-and-turn retains
+volume control. Previous view on Now Playing retains Tab5's Queue shortcut.
+
+The idle screen shows the real remote view and focused item, including context
+commands, with a position counter when available. On Now Playing it uses the
+playback layout. BLE capability `CP_CAP_NAVIGATION=128` negotiates this optional
+stream. Tab5 takes a bounded UI-thread snapshot and the BLE worker sends only
+copies. Legacy peers continue their existing media/volume protocol.
+
+All frames remain 20 bytes with version/session fields unchanged. Kind 21
+(`CP_NAVIGATION`) has revision in bytes 2–3, view/flags in 8/9, zero-based index
+in 10–13, count in 14–17 and focus UTF-8 byte length (0–95) in 18–19. Kind 22
+(`CP_NAV_TEXT`) uses the same revision, byte offset in 8, length (1–10) in 9,
+and text in 10–19. The consumer publishes only a complete matching revision;
+new snapshots supersede unsent text. A one-second metadata heartbeat refreshes
+unchanged focus. Partial/stale packets cannot mix labels across views, and
+navigation expires independently after five seconds. Flags and telemetry are
+listed in the [API reference](api.md#scenes-and-gesture-bindings).
+
+### Previous test profile
 
 The **Tab5 BLE** scene uses navigation bindings matching Tab5's existing UI:
 

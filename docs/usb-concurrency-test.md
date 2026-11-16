@@ -1,6 +1,12 @@
-# USB CDC + HID + JTAG experiment
+# USB CDC + HID + JTAG experiment (retired)
 
-This is an opt-in experiment, separate from the `coloplay` production build.
+This is a historical record. The `usb-concurrency` build target, vendor-HID test
+hooks and experiment HTTP routes were removed in 0.6.32. Commands below describe
+the earlier experiment and require its archived source/image. Current firmware
+has one target, `coloplay`; its production USB modes are documented in the
+[firmware guide](firmware.md). The local recovery helper remains supported.
+
+The experiment was separate from the `coloplay` production build.
 The host checks must run on the computer physically connected to the gadget;
 WiFi/HTTP telemetry alone cannot prove USB enumeration or a JTAG TAP scan.
 
@@ -56,7 +62,7 @@ partition tables, NVS and OTA metadata, and leaves the chip in ROM mode. Release
 the controls and power-cycle normally afterward. `--dry-run` prints the exact
 esptool commands. No erase-flash or first-install bootstrap is needed.
 
-## Build and run
+## Historical build and run (retired target)
 
 From the development checkout:
 
@@ -115,14 +121,15 @@ Experiment-only routes:
 
 Collect the report before restoring the exact known-good image over WiFi OTA.
 Check its original MD5, hardware readiness and saved settings after reboot.
-Host evidence is pending until the attached computer runs these checks; the
-expected PHY limitation is documented separately from measured results.
+No simultaneous-host pass was established during the staged run. This archive
+does not leave a host experiment pending for the production firmware.
 
 ## Status of the staged run
 
 On 2026-11-13 the experiment image booted in Serial/JTAG baseline mode. No host
 report was received before the user requested replacing it with production
 `0.4.2-scene-lighting` over OTA. Therefore this run has **no measured concurrent
-CDC/HID/JTAG result**. The host test requires staging the experiment again;
-its original recovery bundle contains v1 scene firmware and is not a rollback
-of the newer v2 scene configuration.
+CDC/HID/JTAG result**. The experiment is now retired; reproducing it requires
+archived source. Its original recovery bundle contains v1 scene firmware and
+must not be used to preserve current schema-8 settings. Use the current generic
+recovery bundle documented in [Flashing](flash.md#recovery).

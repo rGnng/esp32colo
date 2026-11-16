@@ -9,9 +9,10 @@ class GestureEngine {
   struct State {
     bool raw=false,down=false,blocked=false,held=false,turned=false,fired=false,joining=false;
     uint8_t clicks=0;
-    uint32_t rawAt=0,downAt=0,upAt=0,joinAt=0;
+    uint32_t rawAt=0,downAt=0,upAt=0,joinAt=0,repeatAt=0;
   };
   void setBindings(const uint16_t *masks,uint8_t deferPress=0){for(int i=0;i<SceneSettings::kInputCount;++i)bindings_[i]=masks[i];deferPress_=deferPress;}
+  void setHolds(const GestureBindings::Hold *holds){for(int i=0;i<SceneSettings::kInputCount;++i)holds_[i]=holds[i];}
   void seed(const bool *raw,uint32_t now){
     for(int i=0;i<SceneSettings::kInputCount;++i){states_[i]=State{};states_[i].raw=states_[i].down=raw[i];states_[i].blocked=raw[i];states_[i].rawAt=now;}
   }
@@ -37,7 +38,7 @@ class GestureEngine {
         if(!s.blocked&&!s.turned&&!(deferPress_&(1u<<i))&&!modifiedTurn&&GesturePolicy::press(bindings_[i])){send(emit,i,kSingle);s.fired=true;}
       }else{
         if(!s.blocked&&!s.turned&&!s.fired){
-          if(!s.held&&GesturePolicy::hold(bindings_[i])&&uint32_t(now-s.downAt)>=kHoldMs){s.held=true;s.clicks=0;send(emit,i,kHold);}
+          if(!s.held&&GesturePolicy::hold(bindings_[i])&&uint32_t(now-s.downAt)>=holds_[i].ms){s.held=true;s.clicks=0;send(emit,i,kHold);}
           if(s.held)send(emit,i,kHoldRelease);
           else{
             ++s.clicks;s.upAt=now;
@@ -55,7 +56,8 @@ class GestureEngine {
     }
     for(int i=0;i<kInputCount;++i){
       auto &s=states_[i];if(s.blocked)continue;
-      if(s.down&&!s.held&&!s.turned&&!s.fired&&GesturePolicy::hold(bindings_[i])&&uint32_t(now-s.downAt)>=kHoldMs){s.clicks=0;s.held=true;send(emit,i,kHold);}
+      if(s.down&&!s.held&&!s.turned&&!s.fired&&GesturePolicy::hold(bindings_[i])&&uint32_t(now-s.downAt)>=holds_[i].ms){s.clicks=0;s.held=true;s.repeatAt=now;send(emit,i,kHold);}
+      else if(s.down&&s.raw&&s.held&&!s.turned&&holds_[i].repeat&&uint32_t(now-s.repeatAt)>=200){s.repeatAt=now;send(emit,i,kHold);}
       if(!s.down&&!s.raw&&!s.joining&&s.clicks&&uint32_t(now-s.upAt)>=kClickMs){send(emit,i,s.clicks-1);s.clicks=0;}
     }
   }
@@ -63,5 +65,6 @@ class GestureEngine {
   State states_[SceneSettings::kInputCount];
   uint16_t bindings_[SceneSettings::kInputCount]={GesturePolicy::kAll,GesturePolicy::kAll,GesturePolicy::kAll,GesturePolicy::kAll,GesturePolicy::kAll,GesturePolicy::kAll,GesturePolicy::kAll};
   uint8_t deferPress_=0;
+  GestureBindings::Hold holds_[SceneSettings::kInputCount];
   template<typename Emit> void send(Emit &emit,int input,int gesture,int repeat=1){if(GesturePolicy::has(bindings_[input],gesture))emit(input,gesture,repeat);}
 };

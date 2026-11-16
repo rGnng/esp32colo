@@ -14,7 +14,7 @@ enum Type : uint8_t { kNone, kNextScene, kPreviousScene, kSwitchScene,
   kVolumeChange, kVolumeSet, kRainbow, kStatic, kToggleAwake, kSync, kTone,
   kBluetoothVolume,kBluetoothMedia,kBluetoothKey,kTypeCount };
 enum Led : uint8_t { kInherit, kProportional, kFeedbackRainbow, kFeedbackStatic, kOff, kOn, kLedCount };
-enum Screen : uint8_t { kUnchanged, kClock, kBlank, kBluetoothVolumeScreen, kBluetoothPlaybackScreen, kScreenCount };
+enum Screen : uint8_t { kUnchanged, kClock, kBlank, kBluetoothVolumeScreen, kBluetoothPlaybackScreen, kBluetoothNavigationScreen, kScreenCount };
 constexpr const char *kInputs[] = {"key1","key2","key3","key4","knob","open","rec"};
 constexpr const char *kGestures[] = {"single","double","triple","hold","hold_release","left","right","press_left","press_right"};
 constexpr const char *kTypes[] = {"none","next_scene","previous_scene","switch_scene",
@@ -22,7 +22,7 @@ constexpr const char *kTypes[] = {"none","next_scene","previous_scene","switch_s
   "volume_change","volume_set","rainbow","static","toggle_awake","sync_time","tone",
   "bluetooth_volume","bluetooth_media","bluetooth_key"};
 constexpr const char *kLeds[] = {"inherit","proportional","rainbow","static","off","on"};
-constexpr const char *kScreens[] = {"unchanged","clock","blank","bluetooth_volume","bluetooth_playback"};
+constexpr const char *kScreens[] = {"unchanged","clock","blank","bluetooth_volume","bluetooth_playback","bluetooth_navigation"};
 struct Action {
   // Keep the on-flash action at 12 bytes: the high LED byte bit is audio feedback.
   static constexpr uint8_t kSound = 0x80;
@@ -44,7 +44,12 @@ struct BindingV1 {
   uint8_t scene = 0, input = 0, gesture = 0, count = 0;
   Action actions[kActionCount];
 };
-struct Binding : BindingV1 { uint8_t global=0,reserved[3]={}; };
+struct Binding : BindingV1 {
+  uint8_t global=0,reserved[3]={};
+  bool repeatHold()const{return reserved[0]==1;}
+  uint16_t holdMs()const{const uint16_t ms=uint16_t(reserved[1])|(uint16_t(reserved[2])<<8);return ms?ms:600;}
+  void setHold(uint16_t ms,bool repeat){reserved[0]=repeat;reserved[1]=ms==600?0:uint8_t(ms);reserved[2]=ms==600?0:uint8_t(ms>>8);}
+};
 enum LightingMode : uint32_t { kGeneralLighting, kSceneRainbow, kSceneStatic, kLightingModeCount };
 constexpr const char *kLightingModes[] = {"general","rainbow","static"};
 struct Light {
@@ -73,7 +78,7 @@ enum RingDisplay : uint8_t { kRingLighting, kRingBluetoothProgress, kRingDisplay
 constexpr const char *kRingDisplays[]={"lighting","bluetooth_progress"};
 struct Scene : SceneV2 { Level levels[3]; uint8_t icon=0,ringDisplay=kRingLighting,ringStyle=RingFill::kClockwise,reserved2=0; };
 struct Stored {
-  uint32_t version = 7;
+  uint32_t version = 8;
   uint8_t active = 0, reserved[3] = {};
   Scene scenes[kSceneCount];
   Binding bindings[kBindingCount];
@@ -128,7 +133,7 @@ inline Light resolveLighting(const Light &scene, bool generalStatic, uint32_t ge
   return scene.mode == kGeneralLighting ? Light{generalStatic ? kSceneStatic : kSceneRainbow, generalColor} : scene;
 }
 inline bool valid(const Stored &s) {
-  if (s.version != 7 || !exists(s, 0) || !exists(s, s.active) || !validName(s.scenes[0].name) || std::strcmp(s.scenes[0].name, "Default")) return false;
+  if (s.version != 8 || !exists(s, 0) || !exists(s, s.active) || !validName(s.scenes[0].name) || std::strcmp(s.scenes[0].name, "Default")) return false;
   for (int i=0;i<kSceneCount;++i) {
     const auto &scene=s.scenes[i];
     if (scene.used > 1 || (scene.used && (!validName(scene.name) || scene.screen < kClock || scene.screen >= kScreenCount || !validLight(scene.ring) || !validLight(scene.keys)))) return false;
@@ -139,6 +144,7 @@ inline bool valid(const Stored &s) {
     const auto &b = s.bindings[i];
     if (!b.count) continue;
     if (!exists(s, b.scene) || b.global>1 || (b.global&&b.scene!=0) || !validGesture(b.input,b.gesture) || b.count > kActionCount) return false;
+    if(b.reserved[0]>1||b.holdMs()<150||b.holdMs()>3000||(b.repeatHold()&&b.gesture!=kHold))return false;
     for (int j = 0; j < b.count; ++j) if (!validAction(s, b.actions[j])) return false;
     for (int j = 0; j < i; ++j) {
       const auto &p = s.bindings[j];
@@ -148,7 +154,7 @@ inline bool valid(const Stored &s) {
   return true;
 }
 // Validate the complete legacy record before replacing the caller's settings.
-// Preserve the v7 storage layout and every other action/scene byte.
+// Preserve the 3304-byte storage layout and every other action/scene byte.
 inline bool normalizeBluetoothVolumes(Stored &settings){
   if(!valid(settings))return false;
   bool changed=false;
@@ -159,6 +165,14 @@ inline bool normalizeBluetoothVolumes(Stored &settings){
   }
   return changed;
 }
+inline bool migrateV7(Stored &settings){
+  if(settings.version!=7)return false;
+  for(const auto &scene:settings.scenes)if(scene.used&&scene.screen>kBluetoothPlaybackScreen)return false;
+  for(const auto &b:settings.bindings)if(b.count){if(b.count>kActionCount)return false;for(int i=0;i<b.count;++i)if(b.actions[i].screen>kBluetoothPlaybackScreen)return false;}
+  settings.version=8;if(!valid(settings)){settings.version=7;return false;}
+  for(auto &b:settings.bindings)std::memset(b.reserved,0,sizeof(b.reserved));
+  return true;
+}
 inline bool migrateV6(Stored &settings){
   if(settings.version!=6)return false;
   for(const auto &b:settings.bindings)if(b.count){
@@ -166,7 +180,7 @@ inline bool migrateV6(Stored &settings){
     for(int i=0;i<b.count;++i)if(b.actions[i].ledEffect()>=kOn||b.actions[i].color>0xFFFFFF)return false;
   }
   settings.version=7;
-  if(!valid(settings)){settings.version=6;return false;}
+  if(!migrateV7(settings)){settings.version=6;return false;}
   for(auto &b:settings.bindings)for(auto &a:b.actions)a.setLedBrightness(-1);
   return true;
 }

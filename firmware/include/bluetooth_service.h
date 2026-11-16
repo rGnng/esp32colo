@@ -1,8 +1,11 @@
 #pragma once
 #include <Arduino.h>
 #include <WebServer.h>
+#include "navigation_feedback.h"
 namespace BluetoothService {
 struct Snapshot {
+  NavigationFeedback::State navigation;
+  bool navigationSupported=false;
   bool floatVolume=false,enabled=false,ready=false,connected=false,secured=false,extension=false,fresh=false,available=false,pending=false,positionValid=false;
   int playback=255,seek=0,result=0;
   float volume=-1.0f;

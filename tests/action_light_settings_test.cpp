@@ -15,7 +15,7 @@ int main(){
  auto legacy=defaults();legacy.version=6;
  for(auto &b:legacy.bindings)for(auto &action:b.actions)action.setLedBrightness(0);
  auto &old=legacy.bindings[0].actions[0];old.led=kFeedbackStatic;old.setSound(true);old.color=0xABCDEF;old.feedbackMs=6000;
- auto previous=legacy;assert(migrateV6(legacy)&&valid(legacy)&&legacy.version==7);
+ auto previous=legacy;assert(migrateV6(legacy)&&valid(legacy)&&legacy.version==8);
  assert(legacy.bindings[0].actions[0].ledBrightness()==-1&&legacy.bindings[0].actions[0].colorRgb()==0xABCDEF&&legacy.bindings[0].actions[0].soundEnabled());
  auto normalized=legacy;normalized.version=6;for(auto &b:normalized.bindings)for(auto &action:b.actions)action.setLedBrightness(0);
  assert(!std::memcmp(&previous,&normalized,sizeof(previous)));

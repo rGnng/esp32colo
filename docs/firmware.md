@@ -1,6 +1,6 @@
 # Desktop gadget guide
 
-Current source baseline: **0.6.31-cjk-subset**. The gadget is configured
+Current source baseline: **0.6.33-navigation-nvs**. The gadget is configured
 through the **General**, **Scenes**, **Bluetooth playback** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
 buttons are 14 px, with larger headings and log text. [API](api.md), [development](development.md), and
@@ -194,6 +194,40 @@ with both channels following the scene. Existing records migrate as described
 above. The scene editor has no fill-style menu; legacy scene bytes remain
 intact. Scene-change overlays keep priority over playback screens.
 
+Scene records use a compact, checksummed NVS encoding from 0.6.33. Names,
+bindings, colors, levels and scene order retain their values. Uncompressed older
+records remain readable; use a 0.6.33-or-newer recovery image after saving.
+
+### Tab5 navigation scene
+
+Choose **Scenes → + Tab5 navigation**, then **Activate scene**. This appends a
+new, fully editable **Tab5 Navigation** scene with 11 bindings, leaving existing
+scenes and Global bindings intact. A free scene and 11 free binding slots are
+required; an existing scene with that name is never overwritten.
+
+| Control | Tap / turn | Hold |
+|---|---|---|
+| Knob | Previous/next item | Press and turn for volume |
+| Knob press | Select / Enter | — |
+| Button 1 | Back | — |
+| Button 2 | Previous view; Queue on Now Playing | Repeated Page Up |
+| Button 3 | Next view | Repeated Page Down |
+| Button 4 | Open/close context menu | — |
+
+Paging starts at 350 ms and repeats every 200 ms. A short Button 2/3 press
+switches views immediately on release; releasing after paging never switches
+views. These bindings have no double/triple press delay. Their thresholds and
+repeat switches remain editable in the binding dialog.
+
+The **Bluetooth navigation** idle/action screen shows the current view, focused
+item and position. In a context menu it shows the selected command. On Now
+Playing it uses the configured playback screen; Queue and editing retain the
+navigation display. Long text follows the playback Ellipsis/Scrolling setting.
+Volume action feedback temporarily shows the existing speaker/bar screen.
+Both ColoPlay and Tab5 need the navigation extension. Stale/disconnected feedback
+shows the existing connecting icon. The new stream does not wake a sleeping
+ColoPlay or change scene brightness, playback lighting or settings.
+
 ## Scenes
 
 **Default** always exists, cannot be deleted or renamed, and its bindings are
@@ -231,7 +265,7 @@ bindings continue to target their saved scene IDs.
 
 Existing v1/v2 scenes migrate without changing their names, colors, bindings or
 selection. New brightness overrides start at Use General, icons start at House,
-and existing bindings are not made Global automatically. The version-7 scene
+and existing bindings are not made Global automatically. The version-8 scene
 record is 3304 bytes; older firmware cannot read it, so an application downgrade
 is not a scene-settings rollback.
 
@@ -279,7 +313,11 @@ work, and debounce for 25 ms. Recognition uses the active scene's bindings and
 Global Default bindings. A single-only input fires on debounced press. If Hold
 or Hold then release is configured, a short single fires on release; a hold is
 tracked only when one of those bindings exists and reaches its threshold at
-600 ms. Hold does not also generate a click. Multi-clicks wait up to 300 ms
+600 ms by default. Hold and Hold then release bindings offer a **Hold threshold**
+from 150–3000 ms. A Hold binding can enable **Repeat while held**, firing once
+at the threshold and every 200 ms afterward. Releasing or changing scenes stops
+repeat; a delayed loop does not replay missed intervals in a burst. Hold does
+not also generate a click. Multi-clicks wait up to 300 ms
 between clicks only when Double or Triple is configured. Double without Triple
 resolves on the second release; Triple resolves on the third release. Unmapped
 gestures are not emitted.
@@ -303,7 +341,8 @@ Held members cannot trigger a new group without a fresh press edge. Boot-held
 buttons remain suppressed until released.
 
 Combination click/hold timing follows the same binding-aware rules as individual
-keys. Configured Hold starts 600 ms after the full group forms; Hold then release
+keys. Configured Hold starts at its threshold (600 ms by default) after the
+full group forms; Hold then release
 fires when the first member is released. When no combination matches, ordinary
 button handling continues. One combination is recognized at a time; unrelated
 buttons and knob rotation keep normal handling.
@@ -386,7 +425,9 @@ Last-input telemetry shows the recognized gesture and last action/result.
 ### Standby and screen behavior
 
 Each scene's **Idle screen** can be **Clock**, **Blank**, **Bluetooth volume** or
-**Bluetooth playback**. Blank turns off the
+**Bluetooth playback** or **Bluetooth navigation**. The navigation screen shows
+the remote view/focused item and uses playback appearance on Now Playing.
+Blank turns off the
 display backlight and stops frame updates while leaving the scene's lighting
 active. Scene-switch icon/name overlays still appear briefly. Actions can also
 apply a temporary Clock or Blank screen effect, then return to the saved idle
@@ -499,7 +540,7 @@ the LED ring can also show progress. By default unavailable feedback uses the lo
 **General → Sound → Sound effects volume** controls generated tones, including
 scene-switch sounds. It defaults to 70%; zero mutes tones. Remote playback volume
 and the gadget codec speaker setting remain independent. See the
-[Tab5 scene mapping](tab5-integration.md#installed-test-profile).
+[Tab5 scene mapping](tab5-integration.md#direct-navigation-profile-0632).
 
 The double-click window is 300 ms. A second press starting inside that window
 is allowed to finish debouncing before the first click is resolved. Unmapped

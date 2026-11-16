@@ -13,7 +13,7 @@ development. The build target and default hostname remain `coloplay`.
 
 ## Current baseline
 
-Current firmware: **`0.6.31-cjk-subset`**. Tab5 owns the selected volume scale:
+Current source: **`0.6.33-navigation-nvs`**. Tab5 owns the selected volume scale:
 **1/16 Squared Curve**, **1/64 Squared Curve** (default), **2% Integer**, or
 **5% Integer**. ColoPlay synchronizes it over BLE and predicts immediate
 screen/ring response. Small curved hardware readback differences map back to
@@ -34,7 +34,7 @@ lighting and searchable HID keys remain available.
 Both devices use application-only OTA. Source/build identity, validation results
 and image fingerprints are in the
 [release record](docs/development.md#current-verified-release).
-The deployed production image occupies **3.09 MiB**, leaving **1.41 MiB** of
+The deployed 0.6.33 production image occupies **3.10 MiB**, leaving **1.40 MiB** of
 headroom in either 4.5 MiB OTA slot. The embedded playback font uses **1.41 MiB**
 of that image; see the [application storage budget](docs/flash.md#application-slots-and-storage-budget).
 The working firmware provides:
@@ -85,7 +85,15 @@ The action editor groups Device and Bluetooth commands; volume offers
 Up/Down commands using Tab5's configured grid, with separate volume/playback screens and
 proportional ring feedback. See [pairing, actions and limits](docs/tab5-integration.md).
 
-The installed **Tab5 BLE** scene supplies knob item navigation/Enter, Back and
+For direct navigation, choose **Scenes → + Tab5 navigation**, then **Activate scene**.
+The new scene uses knob turn/press for item selection, Button 1 for Back,
+Buttons 2/3 for previous/next view (hold to page repeatedly), and Button 4 for
+the context menu. Its idle screen shows Tab5's current view and focused item
+over BLE, returning to playback on Now Playing. Existing scenes remain intact.
+Both updated applications are required for navigation feedback; the last
+verified OTA is still recorded separately above.
+
+The earlier **Tab5 BLE** scene supplies knob item navigation/Enter, Back and
 modifier-first Page Up/Down and previous/next-menu combinations. The same two
 buttons can perform different actions in reverse order. Playback uses a small
 playback-state icon and centered title/artist with an offline 16 px font covering
@@ -118,8 +126,10 @@ The old [hardware-demo](docs/hardware-demo.md) and [clock-and-usb](docs/clock-an
 paths remain as pointers. The [RAM-only LCD probe](firmware/lcd_probe/README.md)
 is optional research material.
 
-The opt-in [USB CDC/HID/JTAG experiment](docs/usb-concurrency-test.md) includes
-host checks and local recovery; it is separate from the production baseline.
+`coloplay` is the only firmware build target. The earlier
+[USB experiment record](docs/usb-concurrency-test.md) is archived; its target,
+HID hooks and experiment routes have been removed. Production USB modes remain
+CDC-ACM Serial + USB JTAG and CDC-ACM Serial + CDC-ECM Network.
 
 ## Connect and build
 

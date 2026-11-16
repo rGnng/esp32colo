@@ -113,8 +113,8 @@ void IRAM_ATTR onTe() { ++gTePulses; }
 bool sceneOverlayVisible(uint32_t now){return gSceneOverlayUntil&&static_cast<int32_t>(gSceneOverlayUntil-now)>0;}
 bool playbackContext(){
   const auto standby=SceneService::standbyScreen(),screen=SceneService::screen();
-  return standby==SceneSettings::kBluetoothPlaybackScreen||standby==SceneSettings::kBluetoothVolumeScreen||
-    screen==SceneSettings::kBluetoothPlaybackScreen||screen==SceneSettings::kBluetoothVolumeScreen||
+  return standby==SceneSettings::kBluetoothPlaybackScreen||standby==SceneSettings::kBluetoothVolumeScreen||standby==SceneSettings::kBluetoothNavigationScreen||
+    screen==SceneSettings::kBluetoothPlaybackScreen||screen==SceneSettings::kBluetoothVolumeScreen||screen==SceneSettings::kBluetoothNavigationScreen||
     SceneService::ringDisplay()==SceneSettings::kRingBluetoothProgress;
 }
 bool playbackAvailable(const BluetoothService::Snapshot &s){return s.fresh&&s.available&&s.playback>=0&&s.playback<=2;}
@@ -124,6 +124,7 @@ bool screenVisible(uint32_t now){
   const auto screen=SceneService::screen();
   if(screen==SceneSettings::kBlank)return false;
   if(screen==SceneSettings::kBluetoothPlaybackScreen){const auto s=BluetoothService::snapshot();return PlaybackSettings::screen(PlaybackService::settings(),playbackAvailable(s),s.playback)!=2;}
+  if(screen==SceneSettings::kBluetoothNavigationScreen){const auto s=BluetoothService::snapshot();if(s.navigation.fresh&&s.navigation.ui.view==0&&!(s.navigation.ui.flags&(CP_NAV_CONTEXT|CP_NAV_QUEUE|CP_NAV_LOADING|CP_NAV_EDITING)))return PlaybackSettings::screen(PlaybackService::settings(),playbackAvailable(s),s.playback)!=2;}
   return true;
 }
 
@@ -310,9 +311,23 @@ void render(uint32_t now) {
       }
       break;
     }
+    case SceneSettings::kBluetoothNavigationScreen:
     case SceneSettings::kBluetoothPlaybackScreen: {
       using namespace PlaybackSettings;
       const auto s=BluetoothService::snapshot();const auto &prefs=PlaybackService::settings();
+      if(SceneService::screen()==SceneSettings::kBluetoothNavigationScreen){
+        const auto &nav=s.navigation;const auto &ui=nav.ui;
+        if(!nav.fresh){bluetoothConnecting();break;}
+        if(ui.view!=0||(ui.flags&(CP_NAV_CONTEXT|CP_NAV_QUEUE|CP_NAV_LOADING|CP_NAV_EDITING))){
+          static uint16_t revision=0;static uint32_t since=0;
+          if(revision!=nav.revision){revision=nav.revision;since=now;}
+          playbackText(NavigationFeedback::viewName(ui),62,kMuted,172);
+          if(ui.flags&CP_NAV_LOADING)playbackText("Loading...",125,kMuted);
+          else if(ui.flags&CP_NAV_FOCUS)playbackText(ui.focus,125,TFT_WHITE,208,now-since);
+          if(ui.count){char count[32];snprintf(count,sizeof(count),"%lu / %lu",(unsigned long)ui.index+1,(unsigned long)ui.count);playbackText(count,181,kMuted,160);}
+          break;
+        }
+      }
       const int mode=screen(prefs,playbackAvailable(s),s.playback);
       if(mode==3){bluetoothConnecting();break;}
       if(mode==1){drawClock();break;}

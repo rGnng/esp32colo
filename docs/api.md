@@ -8,7 +8,7 @@ This reference describes the current implementation in
 [scene_service.cpp](../firmware/src/scene_service.cpp),
 [clock_service.cpp](../firmware/src/clock_service.cpp) and
 [usb_network.cpp](../firmware/src/usb_network.cpp).
-The current source is **0.6.31-cjk-subset**, including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
+The current source is **0.6.33-navigation-nvs**, including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
 filled/unfilled ring colors.
 Deployment fingerprints for the last verified OTA are in the
 [release record](development.md#current-verified-release). Bluetooth's BLE wire
@@ -128,8 +128,8 @@ state, not a saved countdown. Sleep leaves HTTP/USB available and reports
 gesture/action/effect `catalog`, and `scenes`. Each scene has a stable numeric
 `id`, `name`, `protected`, `standby_screen`, `ring_mode`, `ring_color`,
 `keys_mode`, `keys_color`, and sparse `bindings` list. Each
-binding contains `input`, `gesture`, `global` and an ordered `actions` array. NVS stores
-one version-7, 3304-byte record: 8 scenes, 64 configured gestures and up to 3
+binding contains `input`, `gesture`, `global`, `hold_ms`, `repeat_hold` and an
+ordered `actions` array. The logical version-8 record is 3304 bytes: 8 scenes, 64 configured gestures and up to 3
 actions per gesture. The active scene is persistent.
 
 Ring and key LED modes independently accept `general`, `rainbow` or `static`;
@@ -137,7 +137,8 @@ colors use `#RRGGBB`. `catalog.lighting_modes` lists these choices. Omitted
 lighting fields retain their saved values, including during rename requests.
 `state` and `/api/status.scene` include the active scene's same lighting and icon fields.
 `hardware.display.scene_overlay` is true while the switch icon/name is displayed.
-`standby_screen` accepts `clock`, `blank`, `bluetooth_volume` or `bluetooth_playback`; omission retains the current choice.
+`standby_screen` accepts `clock`, `blank`, `bluetooth_volume`, `bluetooth_playback`
+or `bluetooth_navigation`; omission retains the current choice.
 `state.screen` reports the resolved idle/action screen behavior, including temporary
 screen effects. Blank switches off only the display and reports effective
 screen brightness 0; inactivity sleep sets `hardware.awake=false` and all three
@@ -151,12 +152,41 @@ feedback overlays scene lighting, then expires back to it. Legacy v1 scenes migr
 | `op` | Fields | Result |
 |---|---|---|
 | `create` | `name` | Create an empty scene in a free slot |
+| `tab5_navigation` | None | Append an editable Tab5 Navigation scene and 11 bindings; retain active selection and all existing scenes |
 | `update` | `scene_id`, `name`, optional screen/color, `icon` and brightness fields below | Save scene settings atomically |
 | `delete` | `scene_id` | Delete; active/scene-switch targets fall back to Default |
 | `reorder` | `scene_id`, `position` (zero-based) | Move an existing scene in the saved display/navigation order |
 | `activate` | `scene_id` | Persist active selection and clear pending input/effects |
-| `binding` | `scene_id`, `input`, `gesture`, `count`, optional `global=0/1`, action fields below | Atomically replace the complete ordered binding; count 0 clears |
+| `binding` | `scene_id`, `input`, `gesture`, `count`, optional `global=0/1`, `hold_ms`, `repeat_hold`, action fields below | Atomically replace the complete ordered binding; count 0 clears |
 | `run` | `scene_id`, `input`, `gesture` | Execute the saved binding in the active scene; requires hardware ready |
+
+`hold_ms` accepts 150–3000 (default 600); `repeat_hold` accepts 0/1 (default 0)
+and is allowed only for the `hold` gesture. Repeat fires every 200 ms while held,
+stopping on release/cancellation with no catch-up burst. The `timing` object
+includes `hold_repeat_ms=200`. When Hold and Hold then release are both bound,
+the effective Hold binding owns the threshold. Schema 8 reuses three reserved
+binding bytes, retaining the 3304-byte layout; v7 records migrate to the previous
+600 ms / no-repeat behavior. Recovery firmware must understand schema 8.
+
+From 0.6.33, scene saves use a lossless `CSR1` envelope under the same NVS
+`scenes/settings` key. Its bounded LZ payload preserves the complete logical
+record byte-for-byte and includes decoded size, encoding version and CRC32.
+The write uses the NVS blob operation without deleting the previous key first.
+Uncompressed v1–v8 records remain readable and migrate as before; older firmware
+cannot decode `CSR1`, so recovery images must support this envelope.
+The `/api/scenes` response adds `storage.format`, `storage.bytes` and
+`storage.raw_bytes` for diagnostics.
+Compression runs only on save and decoding on boot; rendering uses normal RAM
+settings. Scratch space prefers PSRAM and is freed after the operation.
+
+`bluetooth.navigation` in `/api/status` and `/api/bluetooth` reports `supported`,
+`fresh`, `revision`, `view`, `view_id`, `flags`, `index`, `count`, and `focus`.
+Index is zero-based; counts describe the current list or focus group. Flags are
+1 Context menu, 2 Editing, 4 Loading, 8 Focus available, 16 Queue, 32 Tab5 screen
+on. View IDs 0–6 are Now Playing, Albums, Artists, Songs, Playlists, Bluetooth,
+Settings. Check `fresh` before using labels/positions. Navigation freshness is
+independent of media feedback and expires after five seconds. The navigation
+screen consumes this state; the playback/volume screens keep their behavior.
 
 The `scenes` array is returned in saved order. Reorder accepts positions
 0 through scene-count minus one, preserves scene IDs/settings/bindings/active
@@ -315,7 +345,7 @@ The retired `auto_screen`, `auto_ring`, `auto_keys`, `auto_dark_raw` and
 `auto_bright_raw` parameters return HTTP 400 before any lighting changes.
 Scene create/update likewise reject the three retired `auto_<channel>` flags.
 Old on-flash fields are reserved/ignored; lighting stays version 1 / 44 bytes,
-scene version 7 / 3304 bytes, preserving manual levels and all other settings.
+scene version 8 / 3304 bytes, preserving manual levels and all other settings.
 
 Legacy `leds` values are converted by `(value * 100 + 127) / 255` using integer
 arithmetic; `leds=64` is approximately 25%, not 100%. Prefer the independent

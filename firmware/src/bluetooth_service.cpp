@@ -30,6 +30,7 @@ BLEServer *gServer=nullptr;BLECharacteristic *gCaps=nullptr,*gCommand=nullptr,*g
 BLEAdvertising *gAdvertising=nullptr;
 portMUX_TYPE gMux=portMUX_INITIALIZER_UNLOCKED;
 VolumePrediction gVolumePrediction;
+NavigationFeedback gNavigation;
 Snapshot gState;PlaybackClock gPlaybackClock;uint32_t gSession=0;std::atomic<uint32_t> gPairUntil{0};uint16_t gNextRequest=0,gConn=0;
 std::atomic<bool> gDisconnect{false},gPersistPeer{false},gAdvertisingOn{false};uint8_t gRemote[6]={};
 struct Out {uint8_t bytes[CP_BLE_BYTES];};QueueHandle_t gQueue=nullptr;
@@ -49,7 +50,7 @@ bool hasPeer(){uint8_t any=0;for(auto byte:gSettings.peer)any|=byte;return any!=
 bool pairing(){return gPairUntil&&static_cast<int32_t>(gPairUntil-millis())>0;}
 String quote(const char *value){String s="\"";for(const unsigned char *p=(const unsigned char*)value;*p;++p){if(*p=='"'||*p=='\\')s+='\\';if(*p>=32)s+=char(*p);}return s+'"';}
 String address(const uint8_t *p){char out[18];snprintf(out,sizeof(out),"%02X:%02X:%02X:%02X:%02X:%02X",p[0],p[1],p[2],p[3],p[4],p[5]);return out;}
-void clearState(){gState.request=gState.usage=0;gState.result=CP_PENDING;gPlaybackClock.reset();gVolumePrediction.reset();gState.volumePrediction=false;gState.gridTarget=-1;gState.track=0;gState.elapsedMs=gState.durationMs=0;gState.connected=gState.secured=gState.extension=gState.floatVolume=gState.fresh=gState.available=gState.pending=false;gState.volume=-1;gState.playback=255;gState.seek=0;gState.title[0]=gState.artist[0]=0;}
+void clearState(){gNavigation.reset();gState.navigationSupported=false;gState.request=gState.usage=0;gState.result=CP_PENDING;gPlaybackClock.reset();gVolumePrediction.reset();gState.volumePrediction=false;gState.gridTarget=-1;gState.track=0;gState.elapsedMs=gState.durationMs=0;gState.connected=gState.secured=gState.extension=gState.floatVolume=gState.fresh=gState.available=gState.pending=false;gState.volume=-1;gState.playback=255;gState.seek=0;gState.title[0]=gState.artist[0]=0;}
 class ServerCallbacks:public BLEServerCallbacks {
  void onConnect(BLEServer*,esp_ble_gatts_cb_param_t *param)override {
    portENTER_CRITICAL(&gMux);clearState();gState.connected=true;gConn=param->connect.conn_id;memcpy(gRemote,param->connect.remote_bda,6);gSession=esp_random();if(!gSession)gSession=1;gNextRequest=0;portEXIT_CRITICAL(&gMux);
@@ -74,17 +75,19 @@ class SecurityCallbacks:public BLESecurityCallbacks {
  }
 } gSecurityCallbacks;
 class CapsCallbacks:public BLECharacteristicCallbacks {
- void onRead(BLECharacteristic *c)override{uint8_t data[CP_BLE_BYTES];portENTER_CRITICAL(&gMux);cp_header(data,CP_HELLO,0,gSession);portEXIT_CRITICAL(&gMux);data[8]=CP_CAP_MEDIA|CP_CAP_VOLUME|CP_CAP_KEY|CP_CAP_STATE|CP_CAP_VOLUME_FLOAT|CP_CAP_VOLUME_PREDICT|CP_CAP_VOLUME_SCALE;c->setValue(data,sizeof(data));}
+ void onRead(BLECharacteristic *c)override{uint8_t data[CP_BLE_BYTES];portENTER_CRITICAL(&gMux);cp_header(data,CP_HELLO,0,gSession);portEXIT_CRITICAL(&gMux);data[8]=CP_CAP_MEDIA|CP_CAP_VOLUME|CP_CAP_KEY|CP_CAP_STATE|CP_CAP_VOLUME_FLOAT|CP_CAP_VOLUME_PREDICT|CP_CAP_VOLUME_SCALE|CP_CAP_NAVIGATION;c->setValue(data,sizeof(data));}
 } gCapsCallbacks;
 class StateCallbacks:public BLECharacteristicCallbacks {
  void onWrite(BLECharacteristic *c)override{
    const std::string bytes=c->getValue();const auto *p=(const uint8_t*)bytes.data();
    portENTER_CRITICAL(&gMux);
    if(!gState.secured||!cp_packet(p,bytes.size())||cp_u32(p+4)!=gSession){++gInvalid;portEXIT_CRITICAL(&gMux);return;}
-   if(p[1]==CP_TEXT){const unsigned field=p[2]&0x7f,offset=p[3],n=p[8];if((field==1||field==2)&&offset<63&&n<=11&&offset+n<=63){char *target=gText[field-1];if(!offset)memset(target,0,64);memcpy(target+offset,p+9,n);target[offset+n]=0;if(p[2]&0x80)memcpy(field==1?gState.title:gState.artist,target,64);}else ++gInvalid;}
+   if(p[1]==CP_NAVIGATION||p[1]==CP_NAV_TEXT){if(!gState.navigationSupported||!gNavigation.accept(p,bytes.size(),millis()))++gInvalid;}
+   else if(p[1]==CP_TEXT){const unsigned field=p[2]&0x7f,offset=p[3],n=p[8];if((field==1||field==2)&&offset<63&&n<=11&&offset+n<=63){char *target=gText[field-1];if(!offset)memset(target,0,64);memcpy(target+offset,p+9,n);target[offset+n]=0;if(p[2]&0x80)memcpy(field==1?gState.title:gState.artist,target,64);}else ++gInvalid;}
    else if(p[1]==CP_TRACK){gState.track=uint64_t(cp_u32(p+8))|(uint64_t(cp_u32(p+12))<<32);gPlaybackClock.track(gState.track);gState.title[0]=gState.artist[0]=0;memset(gText,0,sizeof(gText));}
    else if(cp_state_valid(p,bytes.size())){
      gState.extension=true;if(p[1]==CP_HELLO){
+       gState.navigationSupported=(p[16]&CP_CAP_NAVIGATION)!=0;
        gState.floatVolume=(p[16]&CP_CAP_VOLUME_FLOAT)!=0;
        gState.volumePrediction=gState.floatVolume&&(p[16]&CP_CAP_VOLUME_PREDICT)&&(p[16]&CP_CAP_VOLUME_SCALE);
        gVolumePrediction.configure(gState.volumePrediction,p[8]);
@@ -166,6 +169,7 @@ void load(){if(gRtcMagic==0xb1e01690){gPreviousStage=gRtcStage;gPreviousHeap=gRt
 Snapshot snapshot(){
   portENTER_CRITICAL(&gMux);
   const uint32_t now=millis();auto out=gState;
+  out.navigation=gNavigation.snapshot(now,out.connected&&out.secured);
   out.positionMs=gPlaybackClock.position(now);out.positionValid=gPlaybackClock.valid(now);
   out.volumeSteps=gVolumePrediction.steps();out.volumePending=gVolumePrediction.pending();out.volumeCompleted=gVolumePrediction.completed();
   out.predictionReady=gVolumePrediction.ready();out.predicting=gVolumePrediction.active(now);
@@ -227,5 +231,5 @@ bool configure(WebServer &server,String &error){
   error="op must be enable, disable, pair, stop_pairing or forget";return false;
 }
 String statusJson(){const auto s=snapshot();char track[17];snprintf(track,sizeof(track),"%016llx",(unsigned long long)s.track);const int remaining=pairing()?int((gPairUntil-millis()+999)/1000):0;String out="{\"enabled\":"+String(s.enabled?"true":"false")+",\"ready\":"+String(s.ready?"true":"false")+",\"stored\":"+String(gStored?"true":"false")+",\"connected\":"+String(s.connected?"true":"false")+",\"secured\":"+String(s.secured?"true":"false")+",\"extension\":"+String(s.extension?"true":"false")+",\"pairing_seconds\":"+String(remaining)+",\"peer\":"+quote(hasPeer()?address(gSettings.peer).c_str():"");
- out+=",\"last_panic\":"+PanicCapture::json()+",\"error\":"+String(gStartError)+",\"stage\":"+String(gStartAttempted?gRtcStage:0)+",\"last_boot_stage\":"+String(gPreviousStage)+",\"last_boot_heap\":"+String(gPreviousHeap)+",\"track\":"+quote(track)+",\"advertising\":"+String(gAdvertisingOn?"true":"false")+",\"fresh\":"+String(s.fresh?"true":"false")+",\"available\":"+String(s.available?"true":"false")+",\"volume\":"+String(s.volume<0?-1.0f:s.volume*100.0f,4)+",\"volume_fraction\":"+String(s.volume,8)+",\"float_volume\":"+String(s.floatVolume?"true":"false")+",\"volume_steps\":"+String(s.volumeSteps)+",\"volume_scale\":"+quote(volume_scale_name(s.volumeSteps))+",\"volume_prediction\":"+String(s.volumePrediction?"true":"false")+",\"prediction_ready\":"+String(s.predictionReady?"true":"false")+",\"predicting\":"+String(s.predicting?"true":"false")+",\"volume_pending\":"+String(s.volumePending)+",\"volume_completed\":"+String(s.volumeCompleted)+",\"grid_target\":"+String(s.gridTarget,8)+",\"preview_fraction\":"+String(s.preview,8)+",\"display_volume_fraction\":"+String(s.displayVolume,8)+",\"playback\":"+String(s.playback)+",\"seek\":"+String(s.seek)+",\"request\":"+String(s.request)+",\"result\":"+String(s.result)+",\"pending\":"+String(s.pending?"true":"false")+",\"title\":"+quote(s.title)+",\"artist\":"+quote(s.artist)+",\"elapsed_ms\":"+String(s.elapsedMs)+",\"position_ms\":"+String(s.positionMs)+",\"position_valid\":"+String(s.positionValid?"true":"false")+",\"duration_ms\":"+String(s.durationMs)+",\"sent\":"+String(gSent)+",\"dropped\":"+String(gDropped)+",\"invalid\":"+String(gInvalid.load())+"}";return out;}
+ out+=",\"last_panic\":"+PanicCapture::json()+",\"error\":"+String(gStartError)+",\"stage\":"+String(gStartAttempted?gRtcStage:0)+",\"last_boot_stage\":"+String(gPreviousStage)+",\"last_boot_heap\":"+String(gPreviousHeap)+",\"track\":"+quote(track)+",\"advertising\":"+String(gAdvertisingOn?"true":"false")+",\"fresh\":"+String(s.fresh?"true":"false")+",\"available\":"+String(s.available?"true":"false")+",\"volume\":"+String(s.volume<0?-1.0f:s.volume*100.0f,4)+",\"volume_fraction\":"+String(s.volume,8)+",\"float_volume\":"+String(s.floatVolume?"true":"false")+",\"volume_steps\":"+String(s.volumeSteps)+",\"volume_scale\":"+quote(volume_scale_name(s.volumeSteps))+",\"volume_prediction\":"+String(s.volumePrediction?"true":"false")+",\"prediction_ready\":"+String(s.predictionReady?"true":"false")+",\"predicting\":"+String(s.predicting?"true":"false")+",\"volume_pending\":"+String(s.volumePending)+",\"volume_completed\":"+String(s.volumeCompleted)+",\"grid_target\":"+String(s.gridTarget,8)+",\"preview_fraction\":"+String(s.preview,8)+",\"display_volume_fraction\":"+String(s.displayVolume,8)+",\"playback\":"+String(s.playback)+",\"seek\":"+String(s.seek)+",\"request\":"+String(s.request)+",\"result\":"+String(s.result)+",\"pending\":"+String(s.pending?"true":"false")+",\"title\":"+quote(s.title)+",\"artist\":"+quote(s.artist)+",\"elapsed_ms\":"+String(s.elapsedMs)+",\"position_ms\":"+String(s.positionMs)+",\"position_valid\":"+String(s.positionValid?"true":"false")+",\"duration_ms\":"+String(s.durationMs)+",\"sent\":"+String(gSent)+",\"dropped\":"+String(gDropped)+",\"invalid\":"+String(gInvalid.load())+",\"navigation\":{\"supported\":"+String(s.navigationSupported?"true":"false")+",\"fresh\":"+String(s.navigation.fresh?"true":"false")+",\"revision\":"+String(s.navigation.revision)+",\"view\":"+quote(NavigationFeedback::viewName(s.navigation.ui))+",\"view_id\":"+String(s.navigation.ui.view)+",\"flags\":"+String(s.navigation.ui.flags)+",\"index\":"+String(s.navigation.ui.index)+",\"count\":"+String(s.navigation.ui.count)+",\"focus\":"+quote(s.navigation.ui.focus)+"}}";return out;}
 }

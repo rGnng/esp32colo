@@ -39,7 +39,7 @@ def image_path(value):
     if value:return Path(value).expanduser().resolve()
     beside=Path(__file__).resolve().parent/'known-good.bin'
     if beside.exists():return beside
-    return Path(__file__).resolve().parents[1]/'backups/usb-concurrency/recovery/known-good.bin'
+    return Path(__file__).resolve().parents[1]/'backups/recovery/known-good.bin'
 
 def commands(port,image,baud):
     base=[sys.executable,'-m','esptool','--chip','esp32s3','--port',port,'--baud',str(baud),'--before','no-reset','--after','no-reset']

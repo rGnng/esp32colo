@@ -22,14 +22,14 @@ fi
 ./scripts/test_http_ota.sh
 ```
 
-To validate both production and the opt-in USB experiment, build them explicitly:
+`coloplay` is the single firmware target:
 
 ```bash
-.venv/bin/pio run --project-dir firmware -e coloplay -e usb-concurrency
+.venv/bin/pio run --project-dir firmware -e coloplay
 ```
 
-The normal OTA image remains the `coloplay` application; the experiment has its
-own [host checks and recovery procedure](usb-concurrency-test.md).
+The former USB-concurrency target and firmware test hooks are retired. Both
+production USB modes are provided by this same application image.
 
 The normal build also regenerates embedded web assets from `firmware/web/`
 using Python only; it needs no npm, Sass or network access for those assets.
@@ -101,20 +101,24 @@ OTA writes a complete application to the inactive slot, so either slot must fit
 the full firmware. The inactive slot retains its previous application until the
 next update writes it; it is not a dedicated minimal recovery image.
 
-The verified **0.6.31-cjk-subset** production image has this budget:
+The verified **0.6.33-navigation-nvs** production image has this budget:
 
 | Item | Bytes | MiB |
 |---|---:|---:|
 | Application slot capacity | 4,718,592 | 4.50 |
-| Complete production application | 3,240,160 | 3.09 |
+| Complete production application | 3,248,048 | 3.10 |
 | Embedded playback font, included in the application above | 1,477,697 | 1.41 |
-| Remaining capacity for an application of this size | 1,478,432 | 1.41 |
+| Remaining capacity for an application of this size | 1,470,544 | 1.40 |
 
 These are flash/image sizes, not free heap or PSRAM. The font stays in mapped
 flash and is not copied wholesale to RAM. Its current subset saves **875,913
 font bytes** compared with the original full Japanese profile. See the
 [font repertoire and regeneration guide](../assets/fonts/noto-sans-jp/README.md)
 and [verified image fingerprints](development.md#current-verified-release).
+
+Settings share a separate **16 KiB NVS partition**. OTA-slot headroom does not
+increase that pool. From 0.6.33, scene records use the compact `CSR1` encoding
+under the existing NVS key; the logical record remains 3304 bytes.
 
 The area from `0x920000` contains preserved factory `user_bin`, `lfs` and
 `littlefs` data, as recorded in the [factory partition table](factory-firmware.md).
@@ -231,9 +235,17 @@ wifi-reset
 boot. It does not reset scenes, lighting, clock or USB configuration. There is no generic
 reset-all-settings operation in the current firmware.
 
-For the CDC/HID/JTAG experiment, prepare the portable known-good recovery bundle
-first. Its [two-slot recovery procedure](usb-concurrency-test.md#recovery-preparation)
-preserves settings and works regardless of the selected OTA slot.
+A portable known-good application bundle can restore both slots while
+preserving settings, regardless of the selected OTA slot:
+
+```bash
+python3 scripts/recover_usb.py --image /path/to/known-good.bin --port /dev/cu.usbmodemYOUR_PORT
+```
+
+The image needs its matching `manifest.json` alongside it. The [two-slot recovery
+procedure](usb-concurrency-test.md#recovery-preparation) remains applicable after
+retirement of that experiment. Use an image compatible with the saved settings
+schema and the `CSR1` envelope (0.6.33 or newer); the local default bundle is `backups/recovery/known-good.bin`.
 
 ## Factory restore and boot warning
 
@@ -251,7 +263,7 @@ finding does not generalize to other checksum failures.
 
 ## Bluetooth test recovery
 
-Current builds (0.6.15 and later) write scene version 7 and General version 3
+Current builds (0.6.32 and later) write scene version 8 and General version 3
 records. Use a version-7-capable image to preserve saved scenes during recovery.
 Versions 0.6.7–0.6.14 used scene version 6; earlier images cannot read the new
 per-action brightness byte.
