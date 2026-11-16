@@ -67,6 +67,9 @@ characters: common Japanese, the top 1,500 GB2312 Han by frequency, 2,350 common
 Hangul syllables plus Jamo, Latin and audited library supplements. Shared Unicode
 Han uses one Japanese glyph. Decomposed modern Hangul is composed for display.
 Unsupported characters, including emoji and rarer syllables/ideographs, use `?`.
+The [font guide](../assets/fonts/noto-sans-jp/README.md) records the repertoire,
+source priority and complete-library audit. Composition and glyph lookup happen
+on ColoPlay; Tab5 continues sending its existing UTF-8 metadata over BLE.
 
 A binding holds up to three ordered actions, including keyboard taps. This
 supports short sequences; a dedicated 16-step macro editor is not implemented.

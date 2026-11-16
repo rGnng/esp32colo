@@ -174,11 +174,19 @@ the current scene color/mode when creating Custom. Screen preferences persist.
 **Screen** has switches for the status icon, title, artist and progress bar.
 Time can show Elapsed / Total, Remaining, or Off. Long titles/artists use
 Ellipsis or Scrolling (24 pixels/second, with a one-second pause at each end).
-Japanese text retains the embedded 16 px font and stays centered; a single
-metadata line centers vertically. Paused/stopped screens can keep playback,
+Japanese, common Chinese and Korean text use the embedded 16 px font and stay
+centered; a single metadata line centers vertically. Paused/stopped screens can keep playback,
 show Clock or go Blank. Disconnected playback can show the connecting icon,
 Clock or Blank. Blank turns the backlight off. These state choices apply to the
 playback screen; a temporary volume screen keeps its icon-and-bar behavior.
+
+The font contains 10,702 unique glyphs. Shared Chinese/Japanese Han characters
+use one Japanese glyph; distinct simplified/traditional characters remain
+separate. Common Hangul supports both precomposed syllables and decomposed
+modern Jamo sequences. Unsupported glyphs use `?`. Coverage is a common subset,
+so some rare characters and emoji in library metadata remain unsupported.
+See the [playback font guide](../assets/fonts/noto-sans-jp/README.md) for the
+character sets, full-library audit and generation workflow.
 
 Settings use the separate `bt-playback` NVS namespace. New state plans initialize
 Playing/Paused with progress lighting and scene-following buttons, and Stopped

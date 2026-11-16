@@ -33,16 +33,44 @@ The 2026-11-16 complete Tab5 audit contained 20,916 songs, 2,130 albums,
 rare ideographs, other scripts, emoji, styled letters and control/invisible
 characters. Raw library metadata is kept only in ignored local backups.
 
-Regeneration (Pillow 12.0.0, fontTools 4.60.1, CairoSVG 2.8.2):
+Regeneration runs on the development computer. With the project virtual
+environment set up, install the pinned rasterization tools:
+
+```sh
+.venv/bin/python -m pip install Pillow==12.0.0 fonttools==4.60.1 CairoSVG==2.8.2
+```
+
+Generate the default profile:
 
 ```sh
 .venv/bin/python scripts/generate_playback_font.py --fetch-sources
 # Later regenerations use the cached, hash-checked sources offline:
 .venv/bin/python scripts/generate_playback_font.py
-.venv/bin/python scripts/audit_playback_font.py --library backups/font-subset/library.json --report backups/font-subset/coverage.json
 ```
 
 `--source-dir` selects the fallback OTF cache (default `backups/font-subset/sources`).
 `--full` regenerates the historical full Japanese-only profile, not full CJK.
 Normal firmware builds use checked-in flash data and need no font tooling or
 network. Sorted CPF1 metrics/bitmaps stay in flash, with no whole-font RAM copy.
+
+To audit another complete Tab5 snapshot:
+
+```sh
+.venv/bin/python scripts/audit_playback_font.py \
+  --library backups/font-subset/library.json \
+  --report backups/font-subset/coverage.json
+```
+
+The snapshot is a private local input, not included in the repository. Its
+`views` object contains songs, albums, artists, playlists and queue entries;
+each view has `total` and a complete `items` array. The audit reads text from
+`title`, `artist`, `album` and `name`, composing Hangul as the renderer does.
+It does not contact Tab5 or alter playback/settings. Coverage counts distinct
+Unicode scalars, not the fraction of songs rendered completely.
+
+In the report, `missing_from_selected` lists gaps in the combined profile;
+`missing_from_source` refers only to the original Japanese OTF, so it can include
+characters supplied by the Chinese/Korean fallbacks. `--update-extra-codepoints`
+adds observed Japanese-source glyphs outside the baseline to the anonymous
+supplement file; regenerate the font and run the tests afterward. It does not
+expand the Chinese ranking or the common Korean syllable set automatically.

@@ -34,6 +34,9 @@ lighting and searchable HID keys remain available.
 Both devices use application-only OTA. Source/build identity, validation results
 and image fingerprints are in the
 [release record](docs/development.md#current-verified-release).
+The deployed production image occupies **3.09 MiB**, leaving **1.41 MiB** of
+headroom in either 4.5 MiB OTA slot. The embedded playback font uses **1.41 MiB**
+of that image; see the [application storage budget](docs/flash.md#application-slots-and-storage-budget).
 The working firmware provides:
 
 - A plain Inter clock showing hours and minutes, with a colon only after NTP sync.
@@ -84,8 +87,12 @@ proportional ring feedback. See [pairing, actions and limits](docs/tab5-integrat
 
 The installed **Tab5 BLE** scene supplies knob item navigation/Enter, Back and
 modifier-first Page Up/Down and previous/next-menu combinations. The same two
-buttons can perform different actions in reverse order. Playback uses a small playback-state icon, centered title/artist with a 16 px Japanese/Chinese/Korean
-font, and a configurable LED-ring progress fill: clockwise or symmetric bottom to top. Connecting uses the
+buttons can perform different actions in reverse order. Playback uses a small
+playback-state icon and centered title/artist with an offline 16 px font covering
+common Japanese, 1,500 frequency-ranked GB2312 Chinese characters and 2,350 common
+Korean syllables plus Jamo. Shared Han characters use the Japanese glyph;
+unsupported characters use `?`. The LED-ring progress fill can run clockwise or
+symmetrically from bottom to top. Connecting uses the
 locally bundled Iconify `andrsrxn:bluetooth-connecting` icon without text.
 General includes saved sound-effects volume for local tones and scene cues. Existing scenes and General settings remain intact.
 Serial companion actions and a dedicated long-sequence editor remain future work.
@@ -101,6 +108,7 @@ Each current topic has one primary guide:
 | Integrate controls or read telemetry | [HTTP API](docs/api.md) |
 | Use Bluetooth controls, Tab5 pairing and media feedback | [Tab5 integration guide](docs/tab5-integration.md) |
 | Understand source, settings, tests and constraints | [Development guide](docs/development.md) |
+| Inspect playback language coverage, font sources or regeneration | [Playback font guide](assets/fonts/noto-sans-jp/README.md) |
 | Inspect recovered hardware assignments | [Factory-derived GPIO map](docs/gpio-map.md) |
 | Inspect the original backup and factory restore procedure | [Factory firmware](docs/factory-firmware.md) |
 | Reproduce recovered factory configurations | [GPIO evidence](docs/firmware-gpio-evidence.md), [LED transmitter evidence](docs/firmware-led-evidence.md) |

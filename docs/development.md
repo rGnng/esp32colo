@@ -499,6 +499,8 @@ MD5 `e9a9c17bf4b88ed4e3adfe53a58f1d71`; its evidence remains under
 | `firmware/include/action_feedback.h`, `action_lighting.h` | Independent per-key/ring overlays, brightness and timed screen feedback |
 | `firmware/include/ring_fill.h`, `playback_clock.h` | Clockwise/symmetric coverage and shared smoothed playback position |
 | `firmware/include/bitmap_font.h`, `playback_assets.h` | Flash-backed CJK playback font and local connection icon |
+| `scripts/generate_playback_font.py`, `playback_font_subset.py` | Hash-pinned font rasterization, common-language repertoires, shared-glyph priority and Hangul composition policy |
+| `scripts/audit_playback_font.py`, `assets/fonts/noto-sans-jp/` | Private snapshot coverage audit, anonymous codepoint lists, source pins, license and generated manifest |
 | `firmware/include/scene_settings.h` | Bounded scene/action schema, validation, protected Default and reference retargeting |
 | `firmware/include/gesture_engine.h` | Independent nonblocking click/hold/turn recognizers with cancellation |
 | `firmware/include/gesture_policy.h`, `chord_engine.h` | Binding-aware recognition timing and reusable held combination members |
@@ -587,7 +589,8 @@ The historical name `test_http_ota.sh` now runs the broader host regression suit
 | `action_sound_test.cpp` | Per-action cue gating, directional scene tones, tone gating and old sound-flag migration |
 | `playback_ring_test.cpp` | Clockwise/symmetric bounds, monotonicity, pairs, endpoints and partial coverage |
 | `playback_clock_test.cpp` | Shared position interpolation, stale samples, pause/resume/seek and bounded extrapolation |
-| `bitmap_font_test.cpp` | Flash font parsing, UTF-8 text measurement, fit and glyph rendering |
+| `bitmap_font_test.cpp` | Flash font parsing/bounds, JP/Chinese/Korean rendering, all modern Hangul compositions and ellipsis preserving complete display units |
+| `test_font_subset.py` | Ranked GB2312/common Hangul coverage, Japanese-first source choice, anonymous supplements and generated glyph membership |
 | `bluetooth_protocol_test.cpp`, `bluetooth_hid_test.cpp` | BLE wire/usage validation and initialized GATT service ownership |
 | `log_buffer_test.cpp` | Bounded log storage, cursors and wrap/reset behavior |
 | `test_input_worker.py` | Production task boundary and timing traces, generation/overflow handling, encoder and held modifiers |
@@ -1062,7 +1065,7 @@ the LCD progress bar. No emoji font or raster asset is added.
 ### Japanese playback font and compact layout (0.6.2)
 
 The original 0.6.2 playback screen used all 16,732 mapped characters from the
-pinned Regular 2.004 Japanese subset OTF. The current 0.6.31 profile below
+pinned Regular 2.004 Japanese subset OTF. The current [0.6.31 profile](#common-cjk-playback-font-0631)
 replaces that full Japanese-only set with common Japanese/Chinese/Korean. The upstream
 unmodified source/license live in `assets/fonts/noto-sans-jp/`; its SHA-256 is
 `dff723ba59d57d136764a04b9b2d03205544f7cd785a711442d6d2d085ac5073`.

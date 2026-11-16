@@ -68,11 +68,11 @@ curl http://coloplay.local/api/status
 | `wifi` | Connection, stored/current SSID, IP, RSSI, MAC; no password |
 | `buttons` | Debounced names, pins, pressed state and counters after hardware startup; early raw inputs during startup/recovery |
 | `clock` | Primary/fallback servers, valid local/Unix time, sync history and SNTP state |
-| `general` | Persistent `scene_change_sound`, `sleep_timeout_minutes` and `stored` |
+| `general` | Persistent `sound_volume`, `scene_change_sound`, `sleep_timeout_minutes` and `stored` |
 | `scene` | Active scene, standby/current screen, NVS state, last event/action/result and temporary feedback |
 | `usb` | Configured/active mode, stages, link, counters, DHCP and lease state |
 | `hardware` | Startup stage, page/tour, awake/paused state, `idle_ms` since the last inactivity reset and peripheral objects |
-| `hardware.display` | Framebuffer, frame/FPS/TE counters, selected/effective screen brightness |
+| `hardware.display` | Framebuffer, frame/FPS/TE counters, selected/effective screen brightness and playback font label/glyph/byte counts |
 | `hardware.encoder` | Raw edges, decoded position, pin levels and `edges_per_detent=2` |
 | `hardware.leds` | Ring/key brightness, effective levels, mode/color and SPI transfer errors/counters |
 | `hardware.lighting` | NVS `stored` |
@@ -615,16 +615,25 @@ migrations preserve existing bindings, scene fields and active selection.
 General schema 3 adds sound gain to a 16-byte record, preserving v1/v2 scene-cue
 and timeout preferences. Older firmware cannot read these newer records.
 
-## Japanese playback typography (0.6.2)
+## Playback typography (0.6.31)
 
-No settings or NVS schema changes. `hardware.display` adds `playback_font`,
-`playback_font_glyphs` and `playback_font_bytes`. The embedded 16 px font
-now contains 10,702 glyphs in 1,477,697 flash bytes (0.6.31 common Japanese,
-top-1,500 GB2312 Chinese and common Korean profile). `playback_font` retains
-the compatible label `Noto Sans JP 16`; the glyph/byte fields report the actual
-profile. Sorted metrics and packed
-4-bit coverage remain flash-backed; only visible glyph pixels are read. UTF-8
-fitting does not split multibyte characters, and unsupported codepoints use `?`.
+The font profile is compiled into the application; there is no font-selection
+API or NVS setting. `hardware.display` reports:
+
+| Field | Current value | Meaning |
+|---|---|---|
+| `playback_font` | `Noto Sans JP 16` | Retained compatibility label for the 16 px font |
+| `playback_font_glyphs` | `10702` | Unique glyphs in the selected JP/Chinese/Korean profile |
+| `playback_font_bytes` | `1477697` | CPF1 metric and bitmap bytes in flash |
+
+The profile covers common Japanese, top-1,500 frequency-ranked GB2312 Chinese,
+common Hangul and library supplements. Shared Unicode Han uses the Japanese
+glyph. Sorted metrics and packed 4-bit coverage remain flash-backed; only visible
+glyph pixels are read. Measurement, drawing and ellipsis compose modern Hangul
+L+V(+T) and LV+T, preserving complete display units when fitting a line. Other
+scripts are not generally normalized or shaped. Unsupported codepoints use `?`.
+See the [font coverage and source guide](../assets/fonts/noto-sans-jp/README.md).
+
 Unavailable Bluetooth feedback shows the locally bundled Iconify
 `andrsrxn:bluetooth-connecting` icon with no connection text on either remote
 screen. A compact playback status row sits above vertically centered metadata,

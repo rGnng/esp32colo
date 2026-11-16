@@ -93,6 +93,34 @@ NVS, PHY and vendor data. An aborted HTTP upload leaves the running slot
 selected. Successful upload verification is not automatic rollback if the
 new application's runtime later crashes.
 
+## Application slots and storage budget
+
+The factory layout provides two equal application slots: `ota_app0` at
+`0x20000` and `ota_app1` at `0x4a0000`, each **4,718,592 bytes (4.5 MiB)**.
+OTA writes a complete application to the inactive slot, so either slot must fit
+the full firmware. The inactive slot retains its previous application until the
+next update writes it; it is not a dedicated minimal recovery image.
+
+The verified **0.6.31-cjk-subset** production image has this budget:
+
+| Item | Bytes | MiB |
+|---|---:|---:|
+| Application slot capacity | 4,718,592 | 4.50 |
+| Complete production application | 3,240,160 | 3.09 |
+| Embedded playback font, included in the application above | 1,477,697 | 1.41 |
+| Remaining capacity for an application of this size | 1,478,432 | 1.41 |
+
+These are flash/image sizes, not free heap or PSRAM. The font stays in mapped
+flash and is not copied wholesale to RAM. Its current subset saves **875,913
+font bytes** compared with the original full Japanese profile. See the
+[font repertoire and regeneration guide](../assets/fonts/noto-sans-jp/README.md)
+and [verified image fingerprints](development.md#current-verified-release).
+
+The area from `0x920000` contains preserved factory `user_bin`, `lfs` and
+`littlefs` data, as recorded in the [factory partition table](factory-firmware.md).
+It is not additional OTA capacity in the current layout. The font update changes
+neither partition sizes nor factory data.
+
 ## First USB flash
 
 Use this section only when establishing the custom firmware for the first time.
